@@ -1,0 +1,17 @@
+-- config_user.lua.example
+-- User configuration for FFT Effect Editor
+--
+-- SETUP:
+-- 1. Copy this file to 'config_user.lua' (remove .example)
+-- 2. Edit DATA_PATH to your preferred location
+-- 3. Reload the effect editor
+--
+-- Or just use the Settings tab in the editor to configure.
+--
+-- NOTE: This tool is for Final Fantasy Tactics (SCUS94221 / NTSC-U)
+
+return {
+    -- Root folder for all editor data
+    -- Subdirectories created automatically: savestates/, bins/, meta/
+    DATA_PATH = "C:/Users/YourName/AppData/Roaming/pcsx-effect-editor/",
+}
