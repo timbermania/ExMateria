@@ -2002,4 +2002,527 @@ function M.copy_effect_flags(flags)
     return { flags_byte = flags.flags_byte }
 end
 
+--------------------------------------------------------------------------------
+-- Sound Flags Parsing/Writing (effect_flags section bytes 0x08-0x17)
+--------------------------------------------------------------------------------
+
+-- Sound channel mode names for UI
+M.SOUND_MODE_NAMES = {
+    [0] = "DIRECT_A",
+    [1] = "PARITY_AB",
+    [2] = "FIRST_A_THEN_B",
+    [3] = "FIRST_A_THEN_BC",
+    [4] = "CYCLE_ABC",
+}
+
+-- Parse sound flags from file data (4 channels at effect_flags +0x08)
+function M.parse_sound_flags_from_data(data, effect_flags_ptr)
+    local flags = {}
+    for i = 0, 3 do
+        local offset = effect_flags_ptr + 0x08 + (i * 4)
+        flags[i + 1] = {
+            mode = mem.buf_read8(data, offset + 0),
+            id_a = mem.buf_read8(data, offset + 1),
+            id_b = mem.buf_read8(data, offset + 2),
+            id_c = mem.buf_read8(data, offset + 3),
+        }
+    end
+    return flags
+end
+
+-- Parse sound flags from PSX memory
+function M.parse_sound_flags_from_memory(base_addr, effect_flags_ptr)
+    local flags = {}
+    for i = 0, 3 do
+        local addr = base_addr + effect_flags_ptr + 0x08 + (i * 4)
+        flags[i + 1] = {
+            mode = mem.read8(addr + 0),
+            id_a = mem.read8(addr + 1),
+            id_b = mem.read8(addr + 2),
+            id_c = mem.read8(addr + 3),
+        }
+    end
+    return flags
+end
+
+-- Write sound flags to PSX memory
+function M.write_sound_flags_to_memory(base_addr, effect_flags_ptr, flags)
+    if not flags then return end
+    for i = 0, 3 do
+        local addr = base_addr + effect_flags_ptr + 0x08 + (i * 4)
+        local ch = flags[i + 1]
+        if ch then
+            mem.write8(addr + 0, ch.mode or 0)
+            mem.write8(addr + 1, ch.id_a or 0)
+            mem.write8(addr + 2, ch.id_b or 0)
+            mem.write8(addr + 3, ch.id_c or 0)
+        end
+    end
+end
+
+-- Deep copy sound flags
+function M.copy_sound_flags(flags)
+    if not flags then return nil end
+    local copy = {}
+    for i = 1, 4 do
+        if flags[i] then
+            copy[i] = {
+                mode = flags[i].mode,
+                id_a = flags[i].id_a,
+                id_b = flags[i].id_b,
+                id_c = flags[i].id_c,
+            }
+        end
+    end
+    return copy
+end
+
+--------------------------------------------------------------------------------
+-- SMD Opcode Definitions (for feds section)
+--------------------------------------------------------------------------------
+
+-- SMD opcode definitions: opcode -> {name, param_count}
+-- Complete table verified from disassembly jump table at 0x80028b0c
+-- Handler receives a0 = ptr to first byte AFTER opcode; returns v0 = new position
+M.SMD_OPCODES = {
+    -- 0x80-0x9F
+    [0x80] = {"Rest", 1},
+    [0x81] = {"Fermata", 1},
+    [0x8A] = {"Unk_8A", 0},
+    [0x8D] = {"Unk_8D", 0},
+    [0x8E] = {"Unk_8E", 3},
+    [0x8F] = {"Unk_8F", 0},
+    [0x90] = {"EndBar", 0},
+    [0x91] = {"Loop", 0},
+    [0x94] = {"Octave", 1},
+    [0x95] = {"RaiseOctave", 0},
+    [0x96] = {"LowerOctave", 0},
+    [0x97] = {"Unk_97", 2},
+    [0x98] = {"Repeat", 1},
+    [0x99] = {"Coda", 0},
+    [0x9A] = {"Unk_9A", 0},
+    [0x9C] = {"Unk_9C", 3},
+    [0x9D] = {"Unk_9D", 2},
+    [0x9E] = {"Unk_9E", 3},
+    -- 0xA0-0xBF
+    [0xA0] = {"Tempo", 1},
+    [0xA1] = {"Unk_A1", 1},
+    [0xA2] = {"Unk_A2", 2},
+    [0xA4] = {"Unk_A4", 1},
+    [0xA5] = {"Unk_A5", 1},
+    [0xA6] = {"Unk_A6", 1},
+    [0xA7] = {"Unk_A7", 2},
+    [0xA9] = {"Unk_A9", 1},
+    [0xAA] = {"Unk_AA", 1},
+    [0xAC] = {"Instrument", 1},
+    [0xAD] = {"Unk_AD", 1},
+    [0xAE] = {"Unk_AE", 0},
+    [0xAF] = {"Unk_AF", 0},
+    [0xB0] = {"Flag_0x800", 0},
+    [0xB1] = {"Unk_B1", 0},
+    [0xB2] = {"Unk_B2", 0},
+    [0xB3] = {"Unk_B3", 0},
+    [0xB4] = {"Unk_B4", 1},
+    [0xB5] = {"Unk_B5", 1},
+    [0xB6] = {"Unk_B6", 0},
+    [0xB7] = {"Unk_B7", 0},
+    [0xB8] = {"Unk_B8", 3},
+    [0xBA] = {"ReverbOn", 0},
+    [0xBB] = {"ReverbOff", 0},
+    -- 0xC0-0xDF
+    [0xC0] = {"Unk_C0", 1},
+    [0xC1] = {"Unk_C1", 3},
+    [0xC2] = {"Unk_C2", 1},
+    [0xC3] = {"Unk_C3", 1},
+    [0xC4] = {"Release", 1},
+    [0xC5] = {"Unk_C5", 1},
+    [0xC6] = {"Unk_C6", 1},
+    [0xC7] = {"Unk_C7", 2},
+    [0xC8] = {"Unk_C8", 1},
+    [0xC9] = {"Unk_C9", 1},
+    [0xCA] = {"Unk_CA", 1},
+    [0xD0] = {"SetPitchBend", 1},
+    [0xD1] = {"AddPitchBend", 1},
+    [0xD2] = {"Unk_D2", 1},
+    [0xD3] = {"Unk_D3", 2},
+    [0xD4] = {"Unk_D4", 2},
+    [0xD5] = {"Unk_D5", 0},
+    [0xD6] = {"Unk_D6", 1},  -- Variable, default 1
+    [0xD7] = {"Unk_D7", 1},  -- Variable, default 1
+    [0xD8] = {"Unk_D8", 3},
+    [0xD9] = {"Unk_D9", 3},  -- CRITICAL: Was defaulting to 0, broke Cure parsing
+    [0xDA] = {"Unk_DA", 0},
+    [0xDB] = {"Unk_DB", 0},
+    [0xDC] = {"Unk_DC", 0},
+    -- 0xE0-0xFF
+    [0xE0] = {"Dynamics", 1},
+    [0xE1] = {"Unk_E1", 1},
+    [0xE2] = {"Expression", 2},  -- FIXED: Was 1, actually 2
+    [0xE3] = {"Unk_E3", 0},
+    [0xE4] = {"Unk_E4", 3},
+    [0xE5] = {"Unk_E5", 3},
+    [0xE6] = {"Unk_E6", 0},
+    [0xE7] = {"Unk_E7", 0},
+    [0xE8] = {"Unk_E8", 1},
+    [0xE9] = {"Unk_E9", 1},
+    [0xEA] = {"Unk_EA", 2},
+    [0xEB] = {"Unk_EB", 0},
+    [0xEC] = {"Unk_EC", 3},
+    [0xED] = {"Unk_ED", 3},
+    [0xEE] = {"Unk_EE", 0},
+    [0xEF] = {"Unk_EF", 0},
+    [0xF0] = {"Unk_F0", 3},
+    [0xF1] = {"Unk_F1", 2},  -- Variable, default 2
+    [0xF2] = {"Unk_F2", 2},
+    [0xF5] = {"Unk_F5", 1},  -- Variable, default 1
+    [0xF6] = {"Unk_F6", 1},
+    [0xF7] = {"Unk_F7", 1},
+}
+
+-- Get opcode info: name and param count
+function M.get_opcode_info(opcode)
+    if opcode < 0x80 then
+        -- Note: volume encoded in opcode, 1 param for pitch/duration
+        return "Note", 1
+    elseif M.SMD_OPCODES[opcode] then
+        local def = M.SMD_OPCODES[opcode]
+        return def[1], def[2]
+    else
+        return string.format("Unk_%02X", opcode), 0
+    end
+end
+
+-- Parse SMD opcodes from raw byte string
+function M.parse_smd_opcodes(raw_bytes)
+    local opcodes = {}
+    local i = 1
+    local len = #raw_bytes
+
+    while i <= len do
+        local opcode = raw_bytes:byte(i)
+        local name, param_count = M.get_opcode_info(opcode)
+
+        local op = {
+            opcode = opcode,
+            name = name,
+            params = {},
+            byte_length = 1 + param_count,
+        }
+
+        for p = 1, param_count do
+            if i + p <= len then
+                op.params[p] = raw_bytes:byte(i + p)
+            else
+                op.params[p] = 0
+            end
+        end
+
+        table.insert(opcodes, op)
+        i = i + op.byte_length
+    end
+
+    return opcodes
+end
+
+-- Serialize opcodes back to raw bytes string
+function M.serialize_smd_opcodes(opcodes)
+    local bytes = {}
+    for _, op in ipairs(opcodes) do
+        table.insert(bytes, string.char(op.opcode))
+        for _, param in ipairs(op.params) do
+            table.insert(bytes, string.char(param))
+        end
+    end
+    return table.concat(bytes)
+end
+
+-- Create a new opcode with default parameters
+function M.create_opcode(opcode_byte)
+    local name, param_count = M.get_opcode_info(opcode_byte)
+    local op = {
+        opcode = opcode_byte,
+        name = name,
+        params = {},
+        byte_length = 1 + param_count,
+    }
+    -- Initialize params with zeros
+    for p = 1, param_count do
+        op.params[p] = 0
+    end
+    return op
+end
+
+--------------------------------------------------------------------------------
+-- Sound Definition ("feds" section) Parsing/Writing
+--------------------------------------------------------------------------------
+
+-- Parse feds section from file data
+function M.parse_sound_definition_from_data(data, sound_def_ptr, section_size)
+    if section_size < 24 then return nil end
+
+    local magic = data:sub(sound_def_ptr + 1, sound_def_ptr + 4)
+    if magic ~= "feds" then return nil end
+
+    local def = {
+        magic = magic,
+        data_size = mem.buf_read32(data, sound_def_ptr + 0x04),
+        pair_count_plus1 = mem.buf_read16(data, sound_def_ptr + 0x08),
+        resource_id = mem.buf_read16(data, sound_def_ptr + 0x0A),
+        data_offset = mem.buf_read32(data, sound_def_ptr + 0x0C),
+        reserved = {},
+        channel_offsets = {},
+        channels = {},
+    }
+
+    -- Read reserved bytes
+    for i = 0, 7 do
+        def.reserved[i + 1] = mem.buf_read8(data, sound_def_ptr + 0x10 + i)
+    end
+
+    -- Calculate channel count: (pair_count_plus1 - 1) * 2
+    def.num_channels = (def.pair_count_plus1 - 1) * 2
+    if def.num_channels < 0 or def.num_channels > 16 then
+        def.num_channels = 0
+    end
+
+    -- Read channel offsets
+    for i = 0, def.num_channels - 1 do
+        def.channel_offsets[i + 1] = mem.buf_read16(data, sound_def_ptr + 0x18 + (i * 2))
+    end
+
+    -- Parse each channel's SMD data
+    for i = 1, def.num_channels do
+        local ch_start = def.channel_offsets[i]
+        local ch_end
+        if i < def.num_channels then
+            ch_end = def.channel_offsets[i + 1]
+        else
+            ch_end = def.data_size
+        end
+        local ch_size = ch_end - ch_start
+
+        local raw_bytes = ""
+        if ch_size > 0 then
+            raw_bytes = data:sub(sound_def_ptr + ch_start + 1, sound_def_ptr + ch_end)
+        end
+
+        def.channels[i] = {
+            offset = ch_start,
+            size = ch_size,
+            raw_bytes = raw_bytes,
+            opcodes = M.parse_smd_opcodes(raw_bytes),
+        }
+    end
+
+    return def
+end
+
+-- Parse feds section from PSX memory
+function M.parse_sound_definition_from_memory(base_addr, sound_def_ptr, section_size)
+    if section_size < 24 then return nil end
+
+    local addr = base_addr + sound_def_ptr
+
+    -- Check magic
+    local magic_bytes = {}
+    for i = 0, 3 do
+        magic_bytes[i + 1] = string.char(mem.read8(addr + i))
+    end
+    local magic = table.concat(magic_bytes)
+    if magic ~= "feds" then return nil end
+
+    local def = {
+        magic = magic,
+        data_size = mem.read32(addr + 0x04),
+        pair_count_plus1 = mem.read16(addr + 0x08),
+        resource_id = mem.read16(addr + 0x0A),
+        data_offset = mem.read32(addr + 0x0C),
+        reserved = {},
+        channel_offsets = {},
+        channels = {},
+    }
+
+    -- Read reserved bytes
+    for i = 0, 7 do
+        def.reserved[i + 1] = mem.read8(addr + 0x10 + i)
+    end
+
+    -- Calculate channel count
+    def.num_channels = (def.pair_count_plus1 - 1) * 2
+    if def.num_channels < 0 or def.num_channels > 16 then
+        def.num_channels = 0
+    end
+
+    -- Read channel offsets
+    for i = 0, def.num_channels - 1 do
+        def.channel_offsets[i + 1] = mem.read16(addr + 0x18 + (i * 2))
+    end
+
+    -- Parse each channel's SMD data
+    for i = 1, def.num_channels do
+        local ch_start = def.channel_offsets[i]
+        local ch_end
+        if i < def.num_channels then
+            ch_end = def.channel_offsets[i + 1]
+        else
+            ch_end = def.data_size
+        end
+        local ch_size = ch_end - ch_start
+
+        -- Read raw bytes from memory
+        local raw_bytes_table = {}
+        for j = 0, ch_size - 1 do
+            raw_bytes_table[j + 1] = string.char(mem.read8(addr + ch_start + j))
+        end
+        local raw_bytes = table.concat(raw_bytes_table)
+
+        def.channels[i] = {
+            offset = ch_start,
+            size = ch_size,
+            raw_bytes = raw_bytes,
+            opcodes = M.parse_smd_opcodes(raw_bytes),
+        }
+    end
+
+    return def
+end
+
+-- Serialize sound definition to bytes (returns byte string and new data_size)
+function M.serialize_sound_definition(def)
+    if not def then return nil, 0 end
+
+    local result = {}
+
+    -- Serialize all channels first to calculate new offsets
+    local channel_bytes = {}
+    local new_offsets = {}
+
+    -- Header is 0x18 bytes + (num_channels * 2) for offset table
+    local header_size = 0x18 + (def.num_channels * 2)
+    -- Align data_offset to typical value (round up to multiple of 4)
+    local new_data_offset = math.ceil(header_size / 4) * 4
+    local current_offset = new_data_offset
+
+    for i, ch in ipairs(def.channels) do
+        local ch_raw = M.serialize_smd_opcodes(ch.opcodes)
+        channel_bytes[i] = ch_raw
+        new_offsets[i] = current_offset
+        current_offset = current_offset + #ch_raw
+    end
+
+    local new_data_size = current_offset
+
+    -- Write header (24 bytes minimum)
+    -- Magic "feds"
+    for i = 1, 4 do
+        table.insert(result, def.magic:byte(i))
+    end
+
+    -- data_size (4 bytes, little-endian)
+    table.insert(result, new_data_size % 256)
+    table.insert(result, math.floor(new_data_size / 256) % 256)
+    table.insert(result, math.floor(new_data_size / 65536) % 256)
+    table.insert(result, math.floor(new_data_size / 16777216) % 256)
+
+    -- pair_count_plus1 (2 bytes, little-endian)
+    table.insert(result, def.pair_count_plus1 % 256)
+    table.insert(result, math.floor(def.pair_count_plus1 / 256) % 256)
+
+    -- resource_id (2 bytes, little-endian)
+    table.insert(result, def.resource_id % 256)
+    table.insert(result, math.floor(def.resource_id / 256) % 256)
+
+    -- data_offset (4 bytes, little-endian)
+    table.insert(result, new_data_offset % 256)
+    table.insert(result, math.floor(new_data_offset / 256) % 256)
+    table.insert(result, math.floor(new_data_offset / 65536) % 256)
+    table.insert(result, math.floor(new_data_offset / 16777216) % 256)
+
+    -- reserved (8 bytes)
+    for i = 1, 8 do
+        table.insert(result, def.reserved[i] or 0)
+    end
+
+    -- channel_offsets (num_channels * 2 bytes)
+    for i = 1, def.num_channels do
+        local off = new_offsets[i] or 0
+        table.insert(result, off % 256)
+        table.insert(result, math.floor(off / 256) % 256)
+    end
+
+    -- Pad to data_offset if needed
+    while #result < new_data_offset do
+        table.insert(result, 0)
+    end
+
+    -- Channel data
+    for i = 1, def.num_channels do
+        local ch_raw = channel_bytes[i]
+        for j = 1, #ch_raw do
+            table.insert(result, ch_raw:byte(j))
+        end
+    end
+
+    -- Convert to byte string
+    local byte_chars = {}
+    for i, b in ipairs(result) do
+        byte_chars[i] = string.char(b)
+    end
+
+    return table.concat(byte_chars), new_data_size
+end
+
+-- Deep copy sound definition
+function M.copy_sound_definition(def)
+    if not def then return nil end
+
+    local copy = {
+        magic = def.magic,
+        data_size = def.data_size,
+        pair_count_plus1 = def.pair_count_plus1,
+        resource_id = def.resource_id,
+        data_offset = def.data_offset,
+        num_channels = def.num_channels,
+        reserved = {},
+        channel_offsets = {},
+        channels = {},
+    }
+
+    -- Copy reserved
+    for i = 1, 8 do
+        copy.reserved[i] = def.reserved[i]
+    end
+
+    -- Copy channel offsets
+    for i = 1, def.num_channels do
+        copy.channel_offsets[i] = def.channel_offsets[i]
+    end
+
+    -- Copy channels with deep copy of opcodes
+    for i = 1, def.num_channels do
+        local ch = def.channels[i]
+        local ch_copy = {
+            offset = ch.offset,
+            size = ch.size,
+            raw_bytes = ch.raw_bytes,
+            opcodes = {},
+        }
+        for j, op in ipairs(ch.opcodes) do
+            local op_copy = {
+                opcode = op.opcode,
+                name = op.name,
+                byte_length = op.byte_length,
+                params = {},
+            }
+            for k, p in ipairs(op.params) do
+                op_copy.params[k] = p
+            end
+            ch_copy.opcodes[j] = op_copy
+        end
+        copy.channels[i] = ch_copy
+    end
+
+    return copy
+end
+
 return M

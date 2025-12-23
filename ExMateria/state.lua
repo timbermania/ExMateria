@@ -51,6 +51,14 @@ EFFECT_EDITOR = {
     effect_flags = nil,                 -- { flags_byte = 0 }
     original_effect_flags = nil,        -- Copy for reset functionality
 
+    -- Sound flags (4 channels from effect_flags section 0x08-0x17)
+    sound_flags = nil,                  -- Array of 4 channels: {mode, id_a, id_b, id_c}
+    original_sound_flags = nil,         -- Copy for reset
+
+    -- Sound definition ("feds" section)
+    sound_definition = nil,             -- Parsed feds structure
+    original_sound_definition = nil,    -- Copy for reset
+
     -- Memory target
     memory_base = 0,
 
@@ -79,7 +87,8 @@ EFFECT_EDITOR = {
     auto_loop_last_time = 0,    -- Last frame time for delta calculation
 
     -- Test cycle settings
-    test_quiet = true           -- Suppress console logging during test cycle
+    test_quiet = true,          -- Suppress console logging during test cycle
+    test_verbose = false        -- Show detailed [DEBUG] messages
 }
 
 -- Breakpoint handle (must be global to avoid GC)
@@ -121,6 +130,10 @@ function M.reset()
     EFFECT_EDITOR.original_timing_curves = nil
     EFFECT_EDITOR.effect_flags = nil
     EFFECT_EDITOR.original_effect_flags = nil
+    EFFECT_EDITOR.sound_flags = nil
+    EFFECT_EDITOR.original_sound_flags = nil
+    EFFECT_EDITOR.sound_definition = nil
+    EFFECT_EDITOR.original_sound_definition = nil
     EFFECT_EDITOR.memory_base = 0
     EFFECT_EDITOR.capture_armed = false
     EFFECT_EDITOR.last_captured_effect_id = -1
@@ -135,6 +148,7 @@ function M.reset()
     EFFECT_EDITOR.auto_loop_timer = 0
     EFFECT_EDITOR.auto_loop_last_time = 0
     EFFECT_EDITOR.test_quiet = true
+    EFFECT_EDITOR.test_verbose = false
 end
 
 return M

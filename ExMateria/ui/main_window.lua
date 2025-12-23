@@ -17,12 +17,13 @@ local timeline_tab = nil
 local camera_tab = nil
 local color_tracks_tab = nil
 local time_scale_tab = nil
+local sound_tab = nil
 local settings_tab = nil
 local test_cycle_fn = nil
 local save_bin_fn = nil
 local reload_fn = nil
 
-function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, header_t, timeline_t, camera_t, color_t, time_scale_t, settings_t, test_fn, save_bin, reload)
+function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, header_t, timeline_t, camera_t, color_t, time_scale_t, sound_t, settings_t, test_fn, save_bin, reload)
     load_panel = load_p
     save_panel = save_p
     structure_tab = struct_tab
@@ -33,6 +34,7 @@ function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, h
     camera_tab = camera_t
     color_tracks_tab = color_t
     time_scale_tab = time_scale_t
+    sound_tab = sound_t
     settings_tab = settings_t
     test_cycle_fn = test_fn
     save_bin_fn = save_bin
@@ -75,7 +77,7 @@ local function draw_top_control_bar()
     -- Get window width for right-alignment
     local window_width = imgui.GetWindowWidth()
 
-    -- Left side: Test Effect button + Quiet checkbox
+    -- Left side: Test Effect button + Quiet/Verbose checkboxes
     if has_session_name and has_memory_target then
         if imgui.Button("Test Effect", 100, 28) then
             if test_cycle_fn then test_cycle_fn() end
@@ -85,11 +87,12 @@ local function draw_top_control_bar()
         imgui.SameLine()
         local c, v = imgui.Checkbox("Quiet", EFFECT_EDITOR.test_quiet)
         if c then EFFECT_EDITOR.test_quiet = v end
+        imgui.SameLine()
+        c, v = imgui.Checkbox("Verbose", EFFECT_EDITOR.test_verbose)
+        if c then EFFECT_EDITOR.test_verbose = v end
     else
-        -- Disabled state - show what's missing
-        imgui.BeginDisabled(true)
-        imgui.Button("Test Effect", 100, 28)
-        imgui.EndDisabled()
+        -- Show placeholder text when not ready
+        imgui.TextUnformatted("(Load effect first)")
     end
 
     -- Middle: Effect info
@@ -127,11 +130,8 @@ local function draw_top_control_bar()
             if reload_fn then reload_fn(EFFECT_EDITOR.session_name) end
         end
     else
-        imgui.BeginDisabled(true)
-        imgui.Button("Save Bin", 85, 28)
-        imgui.SameLine()
-        imgui.Button("Reload", 85, 28)
-        imgui.EndDisabled()
+        -- Show placeholder when no session loaded
+        imgui.TextUnformatted("(no session)")
     end
 
     -- Second row: Auto-loop controls
@@ -221,6 +221,12 @@ local function draw_editor_tabs()
         -- Time Scale tab
         if imgui.BeginTabItem("Time Scale") then
             if time_scale_tab then time_scale_tab.draw() end
+            imgui.EndTabItem()
+        end
+
+        -- Sound Definitions tab
+        if imgui.BeginTabItem("Sound Defs") then
+            if sound_tab then sound_tab.draw() end
             imgui.EndTabItem()
         end
 

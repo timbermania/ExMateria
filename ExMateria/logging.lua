@@ -18,7 +18,9 @@ function M.log(msg)
 end
 
 function M.log_verbose(msg)
-    if LOG_VERBOSE then
+    -- Check UI state (EFFECT_EDITOR.test_verbose) or module state (LOG_VERBOSE)
+    local verbose = LOG_VERBOSE or (EFFECT_EDITOR and EFFECT_EDITOR.test_verbose)
+    if verbose then
         print("[EE] " .. msg)
     end
 end
@@ -39,7 +41,7 @@ function M.set_verbose(on)
 end
 
 function M.is_verbose()
-    return LOG_VERBOSE
+    return LOG_VERBOSE or (EFFECT_EDITOR and EFFECT_EDITOR.test_verbose)
 end
 
 return M

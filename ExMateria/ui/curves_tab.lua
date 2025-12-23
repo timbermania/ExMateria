@@ -54,6 +54,10 @@ local ui_state = {
     gen_start_frame = 0,         -- Frame where curve begins (0-159)
     gen_end_frame = 160,         -- Frame where curve ends (1-160)
 
+    -- Print truncation options
+    print_truncate_enabled = false,
+    print_truncate_frame = 160,
+
     -- Value range (meaning depends on type)
     gen_val_start = 0,           -- Start value (or Min for waves)
     gen_val_end = 255,           -- End value (or Max for waves)
@@ -141,29 +145,33 @@ local function generate_current_curve()
 end
 
 --------------------------------------------------------------------------------
--- Print Curve to Console (shows only active range for better resolution)
+-- Print Curve to Console
+-- end_frame: controls ASCII visual truncation (default 160)
+-- truncate_bytes: if true, also truncate byte output to end_frame
 --------------------------------------------------------------------------------
 
-local function print_curve_to_console(curve, curve_num, end_frame, suffix)
+local function print_curve_to_console(curve, curve_num, end_frame, suffix, truncate_bytes)
     suffix = suffix or ""
     end_frame = end_frame or 160
     if end_frame < 1 then end_frame = 1 end
     if end_frame > 160 then end_frame = 160 end
+    truncate_bytes = truncate_bytes or false
+
+    local byte_end = truncate_bytes and end_frame or 160
 
     print("")
-    print(string.format("========== CURVE %d %s (frames 0-%d) ==========", curve_num, suffix, end_frame - 1))
+    print(string.format("========== CURVE %d %s (frames 0-%d) ==========", curve_num, suffix, byte_end - 1))
 
-    -- Print values - adapt row size based on range
+    -- Print bytes (all 160 or truncated to end_frame)
     local vals_per_row = 16
-    if end_frame <= 16 then vals_per_row = end_frame end
-    local num_rows = math.ceil(end_frame / vals_per_row)
+    local num_rows = math.ceil(byte_end / vals_per_row)
 
     for row = 0, num_rows - 1 do
         local start_idx = row * vals_per_row
         local vals = {}
         for col = 0, vals_per_row - 1 do
             local frame = start_idx + col + 1
-            if frame <= end_frame then
+            if frame <= byte_end then
                 table.insert(vals, string.format("%3d", curve[frame]))
             end
         end
@@ -222,7 +230,10 @@ local function draw_generator_controls()
     imgui.SameLine()
     imgui.SetNextItemWidth(150)
     c, v = imgui.Combo("##gen_type", ui_state.generator_type, build_generator_items())
-    if c then ui_state.generator_type = v end
+    if c then
+        ui_state.generator_type = v
+        set_current_curve(generate_current_curve())
+    end
 
     local gen_type = GENERATOR_TYPES[ui_state.generator_type + 1]
 
@@ -232,12 +243,18 @@ local function draw_generator_controls()
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Start##frame", ui_state.gen_start_frame, 0, 159)
-        if c then ui_state.gen_start_frame = v end
+        if c then
+            ui_state.gen_start_frame = v
+            set_current_curve(generate_current_curve())
+        end
 
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("End##frame", ui_state.gen_end_frame, 1, 160)
-        if c then ui_state.gen_end_frame = v end
+        if c then
+            ui_state.gen_end_frame = v
+            set_current_curve(generate_current_curve())
+        end
     end
 
     -- Type-specific value controls
@@ -248,19 +265,28 @@ local function draw_generator_controls()
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Start##val", ui_state.gen_val_start, 0, 255)
-        if c then ui_state.gen_val_start = v end
+        if c then
+            ui_state.gen_val_start = v
+            set_current_curve(generate_current_curve())
+        end
 
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("End##val", ui_state.gen_val_end, 0, 255)
-        if c then ui_state.gen_val_end = v end
+        if c then
+            ui_state.gen_val_end = v
+            set_current_curve(generate_current_curve())
+        end
 
         -- Power control for easing curves
         if gen_type ~= "Linear" then
             imgui.SameLine()
             imgui.SetNextItemWidth(80)
             c, v = imgui.SliderFloat("Power##curve", ui_state.gen_power, 1.0, 5.0, "%.1f")
-            if c then ui_state.gen_power = v end
+            if c then
+                ui_state.gen_power = v
+                set_current_curve(generate_current_curve())
+            end
         end
 
     elseif gen_type == "Sine Wave" or gen_type == "Triangle Wave" then
@@ -269,24 +295,36 @@ local function draw_generator_controls()
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Min##val", ui_state.gen_val_start, 0, 255)
-        if c then ui_state.gen_val_start = v end
+        if c then
+            ui_state.gen_val_start = v
+            set_current_curve(generate_current_curve())
+        end
 
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Max##val", ui_state.gen_val_end, 0, 255)
-        if c then ui_state.gen_val_end = v end
+        if c then
+            ui_state.gen_val_end = v
+            set_current_curve(generate_current_curve())
+        end
 
         -- Wave parameters
         imgui.TextUnformatted("Wave:")
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderFloat("Cycles##wave", ui_state.gen_cycles, 0.5, 10.0, "%.1f")
-        if c then ui_state.gen_cycles = v end
+        if c then
+            ui_state.gen_cycles = v
+            set_current_curve(generate_current_curve())
+        end
 
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderFloat("Phase##wave", ui_state.gen_phase, 0.0, 1.0, "%.2f")
-        if c then ui_state.gen_phase = v end
+        if c then
+            ui_state.gen_phase = v
+            set_current_curve(generate_current_curve())
+        end
 
     elseif gen_type == "Sawtooth" then
         -- Min/Max value
@@ -294,18 +332,27 @@ local function draw_generator_controls()
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Min##val", ui_state.gen_val_start, 0, 255)
-        if c then ui_state.gen_val_start = v end
+        if c then
+            ui_state.gen_val_start = v
+            set_current_curve(generate_current_curve())
+        end
 
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Max##val", ui_state.gen_val_end, 0, 255)
-        if c then ui_state.gen_val_end = v end
+        if c then
+            ui_state.gen_val_end = v
+            set_current_curve(generate_current_curve())
+        end
 
         -- Teeth parameter
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Teeth##saw", ui_state.gen_teeth, 1, 20)
-        if c then ui_state.gen_teeth = v end
+        if c then
+            ui_state.gen_teeth = v
+            set_current_curve(generate_current_curve())
+        end
 
     elseif gen_type == "Pulse" then
         -- Low/High value
@@ -313,31 +360,46 @@ local function draw_generator_controls()
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Low##val", ui_state.gen_val_start, 0, 255)
-        if c then ui_state.gen_val_start = v end
+        if c then
+            ui_state.gen_val_start = v
+            set_current_curve(generate_current_curve())
+        end
 
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("High##val", ui_state.gen_val_end, 0, 255)
-        if c then ui_state.gen_val_end = v end
+        if c then
+            ui_state.gen_val_end = v
+            set_current_curve(generate_current_curve())
+        end
 
         -- Pulse parameters
         imgui.TextUnformatted("Pulse:")
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("Count##pulse", ui_state.gen_pulses, 1, 20)
-        if c then ui_state.gen_pulses = v end
+        if c then
+            ui_state.gen_pulses = v
+            set_current_curve(generate_current_curve())
+        end
 
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderFloat("Duty##pulse", ui_state.gen_duty, 0.0, 1.0, "%.2f")
-        if c then ui_state.gen_duty = v end
+        if c then
+            ui_state.gen_duty = v
+            set_current_curve(generate_current_curve())
+        end
 
     elseif gen_type == "Constant" then
         imgui.TextUnformatted("Value:")
         imgui.SameLine()
         imgui.SetNextItemWidth(80)
         c, v = imgui.SliderInt("##const_val", ui_state.gen_val_start, 0, 255)
-        if c then ui_state.gen_val_start = v end
+        if c then
+            ui_state.gen_val_start = v
+            set_current_curve(generate_current_curve())
+        end
     end
 
     -- Generate button
@@ -468,7 +530,7 @@ local function draw_action_buttons()
             memory_ops.apply_all_edits_to_memory()
         end
     else
-        imgui.TextDisabled("Apply to Memory (no target)")
+        imgui.TextUnformatted("(Apply to Memory - no target)")
     end
 
     imgui.SameLine()
@@ -529,9 +591,24 @@ function M.draw()
         canvas.draw_curve_canvas(curve_data, 60, nil, "main_curve")
         canvas.draw_stats(curve_data, "main_stats")
 
-        -- Print to console button
+        -- Print to console with optional truncation
+        local c, v = imgui.Checkbox("##print_truncate", ui_state.print_truncate_enabled)
+        if c then ui_state.print_truncate_enabled = v end
+        imgui.SameLine()
+
+        if ui_state.print_truncate_enabled then
+            imgui.SetNextItemWidth(60)
+            c, v = imgui.SliderInt("End##print", ui_state.print_truncate_frame, 1, 160)
+            if c then ui_state.print_truncate_frame = v end
+            imgui.SameLine()
+        end
+
         if imgui.Button("Print Curve to Console") then
-            print_curve_to_console(curve_data, ui_state.selected_curve + 1, ui_state.gen_end_frame)
+            if ui_state.print_truncate_enabled then
+                print_curve_to_console(curve_data, ui_state.selected_curve + 1, ui_state.print_truncate_frame, "", true)
+            else
+                print_curve_to_console(curve_data, ui_state.selected_curve + 1, ui_state.gen_end_frame)
+            end
         end
     else
         imgui.TextUnformatted("No curve data to display")

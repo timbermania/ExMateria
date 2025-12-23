@@ -49,10 +49,10 @@ end
 
 -- Handle structure changes (emitter count changed)
 -- Returns true if structure was modified and sections were shifted
--- silent: if true, suppress debug logging
+-- silent: if true, suppress status logging
 local function handle_structure_change(silent)
-    if not silent then log("  [DEBUG] handle_structure_change called") end
-    if not silent then log(string.format("  [DEBUG] #emitters = %d", EFFECT_EDITOR.emitters and #EFFECT_EDITOR.emitters or 0)) end
+    log_verbose("  [DEBUG] handle_structure_change called")
+    log_verbose(string.format("  [DEBUG] #emitters = %d", EFFECT_EDITOR.emitters and #EFFECT_EDITOR.emitters or 0))
 
     -- ALWAYS read current memory layout - this correctly detects changes after savestate reload
     -- (Previously we cached original_emitter_count which became stale after savestate reload)
@@ -64,8 +64,8 @@ local function handle_structure_change(silent)
     local particle_section_size = mem_anim_table_ptr - mem_effect_data_ptr
     local mem_emitter_count = math.floor((particle_section_size - 0x14) / 0xC4)
 
-    if not silent then log(string.format("  [DEBUG] Memory layout: effect_data=0x%X, anim_table=0x%X", mem_effect_data_ptr, mem_anim_table_ptr)) end
-    if not silent then log(string.format("  [DEBUG] Memory has room for %d emitters", mem_emitter_count)) end
+    log_verbose(string.format("  [DEBUG] Memory layout: effect_data=0x%X, anim_table=0x%X", mem_effect_data_ptr, mem_anim_table_ptr))
+    log_verbose(string.format("  [DEBUG] Memory has room for %d emitters", mem_emitter_count))
 
     -- Store current memory header pointers (needed for shifting)
     local memory_header = {
@@ -80,14 +80,14 @@ local function handle_structure_change(silent)
     local current_count = #EFFECT_EDITOR.emitters
     local original_count = mem_emitter_count  -- Use ACTUAL memory layout, not cached value
 
-    if not silent then log(string.format("  [DEBUG] Comparing: Lua has %d emitters vs memory has room for %d", current_count, original_count)) end
+    log_verbose(string.format("  [DEBUG] Comparing: Lua has %d emitters vs memory has room for %d", current_count, original_count))
 
     if current_count == original_count then
-        if not silent then log("  [DEBUG] Counts match - no structure change needed") end
+        log_verbose("  [DEBUG] Counts match - no structure change needed")
         return false
     end
 
-    if not silent then log(string.format("  [DEBUG] STRUCTURE CHANGE DETECTED: %d -> %d", original_count, current_count)) end
+    log_verbose(string.format("  [DEBUG] STRUCTURE CHANGE DETECTED: %d -> %d", original_count, current_count))
 
     local delta = (current_count - original_count) * 0xC4  -- 196 bytes per emitter
     local header = EFFECT_EDITOR.header
@@ -96,18 +96,18 @@ local function handle_structure_change(silent)
         original_count, current_count, delta)) end
 
     -- Debug: show memory vs Lua header pointers
-    if not silent then log(string.format("  [DEBUG] memory anim_table_ptr = 0x%X", memory_header.anim_table_ptr)) end
-    if not silent then log(string.format("  [DEBUG] Lua header.anim_table_ptr = 0x%X", header.anim_table_ptr)) end
-    if not silent then log(string.format("  [DEBUG] effect_data_ptr = 0x%X", mem_effect_data_ptr)) end
+    log_verbose(string.format("  [DEBUG] memory anim_table_ptr = 0x%X", memory_header.anim_table_ptr))
+    log_verbose(string.format("  [DEBUG] Lua header.anim_table_ptr = 0x%X", header.anim_table_ptr))
+    log_verbose(string.format("  [DEBUG] effect_data_ptr = 0x%X", mem_effect_data_ptr))
 
     -- Calculate the region to shift: from current memory anim_table_ptr to a safe end
     -- Use memory_header (actual PSX memory state) for shift source
     local shift_start = base + memory_header.anim_table_ptr
     local shift_end = base + memory_header.anim_table_ptr + 0x10000  -- Shift 64KB to be safe
 
-    if not silent then log(string.format("  [DEBUG] Shifting memory from 0x%08X to 0x%08X by %d bytes",
-        shift_start, shift_end, delta)) end
-    if not silent then log(string.format("  [DEBUG] This is %d bytes to shift", shift_end - shift_start)) end
+    log_verbose(string.format("  [DEBUG] Shifting memory from 0x%08X to 0x%08X by %d bytes",
+        shift_start, shift_end, delta))
+    log_verbose(string.format("  [DEBUG] This is %d bytes to shift", shift_end - shift_start))
 
     -- Shift the memory region
     shift_memory_region(shift_start, shift_end, delta)
@@ -153,15 +153,13 @@ local function handle_structure_change(silent)
     --
     -- NO MANUAL GLOBAL UPDATES NEEDED - the game does this automatically!
 
-    -- DEBUG: Verify timeline header values at the new location (for debugging)
+    -- DEBUG: Verify timeline header values at the new location (verbose only)
     local new_timeline_section = base + header.timeline_section_ptr
-    if not silent then
-        log("  [DEBUG] Timeline header verification at new location:")
-        log(string.format("    phase1_duration (timeline+4): %d", MemUtils.read16(new_timeline_section + 4)))
-        log(string.format("    spawn_delay (timeline+6): %d", MemUtils.read16(new_timeline_section + 6)))
-        log(string.format("    unknown_08 (timeline+8): %d", MemUtils.read16(new_timeline_section + 8)))
-        log(string.format("    phase2_delay (timeline+10): %d", MemUtils.read16(new_timeline_section + 10)))
-    end
+    log_verbose("  [DEBUG] Timeline header verification at new location:")
+    log_verbose(string.format("    phase1_duration (timeline+4): %d", MemUtils.read16(new_timeline_section + 4)))
+    log_verbose(string.format("    spawn_delay (timeline+6): %d", MemUtils.read16(new_timeline_section + 6)))
+    log_verbose(string.format("    unknown_08 (timeline+8): %d", MemUtils.read16(new_timeline_section + 8)))
+    log_verbose(string.format("    phase2_delay (timeline+10): %d", MemUtils.read16(new_timeline_section + 10)))
 
     -- Update particle_header.emitter_count in memory
     local particle_base = base + mem_effect_data_ptr
@@ -174,11 +172,9 @@ local function handle_structure_change(silent)
     -- Recalculate sections
     EFFECT_EDITOR.sections = Parser.calculate_sections(header)
 
-    if not silent then
-        log(string.format("  [DEBUG] Updated header pointers. New anim_table_ptr=0x%X", header.anim_table_ptr))
-        log(string.format("  [DEBUG] New timeline_section_ptr=0x%X", header.timeline_section_ptr))
-        log(string.format("  [DEBUG] Structure change complete - shift done"))
-    end
+    log_verbose(string.format("  [DEBUG] Updated header pointers. New anim_table_ptr=0x%X", header.anim_table_ptr))
+    log_verbose(string.format("  [DEBUG] New timeline_section_ptr=0x%X", header.timeline_section_ptr))
+    log_verbose("  [DEBUG] Structure change complete - shift done")
 
     return true
 end
@@ -405,22 +401,21 @@ function M.apply_all_edits_to_memory(silent)
     local space_for_emitters = mem_anim_table_ptr - mem_effect_data_ptr - 0x14
     local max_emitters_that_fit = math.floor(space_for_emitters / 0xC4)
 
-    if not silent then
-        log("  [DEBUG] === MEMORY LAYOUT BEFORE MODIFICATIONS ===")
-        log(string.format("  [DEBUG] effect_data_ptr in memory: 0x%X", mem_effect_data_ptr))
-        log(string.format("  [DEBUG] anim_table_ptr in memory: 0x%X", mem_anim_table_ptr))
-        log(string.format("  [DEBUG] emitter_count in memory (at effect_data_ptr+0x02): %d", mem_emitter_count))
-        log(string.format("  [DEBUG] Space between effect_data+0x14 and anim_table: 0x%X bytes", space_for_emitters))
-        log(string.format("  [DEBUG] Max emitters that fit in this space: %d", max_emitters_that_fit))
-        log(string.format("  [DEBUG] Lua has %d emitters", #EFFECT_EDITOR.emitters))
+    -- Debug: memory layout (verbose only)
+    log_verbose("  [DEBUG] === MEMORY LAYOUT BEFORE MODIFICATIONS ===")
+    log_verbose(string.format("  [DEBUG] effect_data_ptr in memory: 0x%X", mem_effect_data_ptr))
+    log_verbose(string.format("  [DEBUG] anim_table_ptr in memory: 0x%X", mem_anim_table_ptr))
+    log_verbose(string.format("  [DEBUG] emitter_count in memory (at effect_data_ptr+0x02): %d", mem_emitter_count))
+    log_verbose(string.format("  [DEBUG] Space between effect_data+0x14 and anim_table: 0x%X bytes", space_for_emitters))
+    log_verbose(string.format("  [DEBUG] Max emitters that fit in this space: %d", max_emitters_that_fit))
+    log_verbose(string.format("  [DEBUG] Lua has %d emitters", #EFFECT_EDITOR.emitters))
 
-        if #EFFECT_EDITOR.emitters > max_emitters_that_fit then
-            log(string.format("  [DEBUG] !!! NEED TO SHIFT: Lua has %d emitters but only room for %d !!!",
-                #EFFECT_EDITOR.emitters, max_emitters_that_fit))
-        else
-            log(string.format("  [DEBUG] OK: Lua has %d emitters, room for %d - NO SHIFT NEEDED",
-                #EFFECT_EDITOR.emitters, max_emitters_that_fit))
-        end
+    if #EFFECT_EDITOR.emitters > max_emitters_that_fit then
+        log_verbose(string.format("  [DEBUG] !!! NEED TO SHIFT: Lua has %d emitters but only room for %d !!!",
+            #EFFECT_EDITOR.emitters, max_emitters_that_fit))
+    else
+        log_verbose(string.format("  [DEBUG] OK: Lua has %d emitters, room for %d - NO SHIFT NEEDED",
+            #EFFECT_EDITOR.emitters, max_emitters_that_fit))
     end
 
     -- Handle structure changes (emitter count changed) FIRST
@@ -435,22 +430,22 @@ function M.apply_all_edits_to_memory(silent)
     local mem_timing_curve_ptr = MemUtils.read32(base + 0x14)
     local lua_timing_curve_ptr = EFFECT_EDITOR.header.timing_curve_ptr
 
-    -- Always log timing curve state (critical for debugging)
-    log(string.format("  Timing: lua_ptr=0x%X, mem_ptr=0x%X, has_data=%s",
+    -- Log timing curve state (verbose only)
+    log_verbose(string.format("  Timing: lua_ptr=0x%X, mem_ptr=0x%X, has_data=%s",
         lua_timing_curve_ptr or 0, mem_timing_curve_ptr or 0,
         EFFECT_EDITOR.timing_curves and "yes" or "no"))
 
     if lua_timing_curve_ptr ~= 0 and mem_timing_curve_ptr == 0 then
         -- Lua wants timing curves but memory doesn't have them - add section
-        log("  Timing curve structure change: ADDING 600-byte section")
+        if not silent then log("  Timing curve structure change: ADDING 600-byte section") end
         local timing_changed = handle_timing_curve_structure_change("add", silent)
         if timing_changed then
             table.insert(applied, "timing structure (add)")
-            log(string.format("  New timing_curve_ptr: 0x%X", EFFECT_EDITOR.header.timing_curve_ptr))
+            if not silent then log(string.format("  New timing_curve_ptr: 0x%X", EFFECT_EDITOR.header.timing_curve_ptr)) end
         end
     elseif lua_timing_curve_ptr == 0 and mem_timing_curve_ptr ~= 0 then
         -- Lua doesn't want timing curves but memory has them - remove section
-        log("  Timing curve structure change: REMOVING section")
+        if not silent then log("  Timing curve structure change: REMOVING section") end
         local timing_changed = handle_timing_curve_structure_change("remove", silent)
         if timing_changed then
             table.insert(applied, "timing structure (remove)")
@@ -476,27 +471,24 @@ function M.apply_all_edits_to_memory(silent)
         local last_emitter_end = particle_base + 0x14 + (#EFFECT_EDITOR.emitters * 0xC4)
         local anim_table_addr = EFFECT_EDITOR.memory_base + EFFECT_EDITOR.header.anim_table_ptr
 
-        if not silent then
-            log(string.format("  [DEBUG] particle_base = 0x%08X (effect_data_ptr = 0x%X)",
-                particle_base, EFFECT_EDITOR.header.effect_data_ptr))
-            log(string.format("  [DEBUG] Writing emitters to 0x%08X - 0x%08X",
-                particle_base + 0x14, last_emitter_end))
-            log(string.format("  [DEBUG] anim_table_ptr is at 0x%08X", anim_table_addr))
-        end
+        -- Debug: emitter write info (verbose only)
+        log_verbose(string.format("  [DEBUG] particle_base = 0x%08X (effect_data_ptr = 0x%X)",
+            particle_base, EFFECT_EDITOR.header.effect_data_ptr))
+        log_verbose(string.format("  [DEBUG] Writing emitters to 0x%08X - 0x%08X",
+            particle_base + 0x14, last_emitter_end))
+        log_verbose(string.format("  [DEBUG] anim_table_ptr is at 0x%08X", anim_table_addr))
 
         if last_emitter_end > anim_table_addr then
             log_error(string.format("  [DEBUG] WARNING: Emitters would overwrite curves! End=0x%08X, Curves=0x%08X",
                 last_emitter_end, anim_table_addr))
         end
 
-        if not silent then
-            -- Debug: Log each emitter's index and write position
-            log("  [DEBUG] Emitter write positions:")
-            for i, e in ipairs(EFFECT_EDITOR.emitters) do
-                local emitter_addr = particle_base + 0x14 + (e.index * 0xC4)
-                log(string.format("    [%d] Lua array pos=%d, emitter.index=%d, write_addr=0x%08X, anim_index=%d",
-                    i, i, e.index, emitter_addr, e.anim_index or -1))
-            end
+        -- Debug: Log each emitter's index and write position (verbose only)
+        log_verbose("  [DEBUG] Emitter write positions:")
+        for i, e in ipairs(EFFECT_EDITOR.emitters) do
+            local emitter_addr = particle_base + 0x14 + (e.index * 0xC4)
+            log_verbose(string.format("    [%d] Lua array pos=%d, emitter.index=%d, write_addr=0x%08X, anim_index=%d",
+                i, i, e.index, emitter_addr, e.anim_index or -1))
         end
 
         for _, e in ipairs(EFFECT_EDITOR.emitters) do
@@ -505,17 +497,15 @@ function M.apply_all_edits_to_memory(silent)
         table.insert(applied, string.format("%d emitters", #EFFECT_EDITOR.emitters))
         if not silent then log(string.format("  Wrote %d emitters", #EFFECT_EDITOR.emitters)) end
 
-        if not silent then
-            -- Verify writes by reading back anim_index (byte 1) from each emitter
-            log("  [DEBUG] Verification - reading back anim_index from each emitter:")
-            for i = 0, #EFFECT_EDITOR.emitters - 1 do
-                local emitter_addr = particle_base + 0x14 + (i * 0xC4)
-                local anim_index = MemUtils.read8(emitter_addr + 0x01)
-                local expected = EFFECT_EDITOR.emitters[i + 1].anim_index
-                local match = (anim_index == expected) and "OK" or "MISMATCH!"
-                log(string.format("    Emitter %d @ 0x%08X: anim_index=%d (expected %d) %s",
-                    i, emitter_addr, anim_index, expected or -1, match))
-            end
+        -- Verify writes by reading back anim_index (verbose only)
+        log_verbose("  [DEBUG] Verification - reading back anim_index from each emitter:")
+        for i = 0, #EFFECT_EDITOR.emitters - 1 do
+            local emitter_addr = particle_base + 0x14 + (i * 0xC4)
+            local anim_index = MemUtils.read8(emitter_addr + 0x01)
+            local expected = EFFECT_EDITOR.emitters[i + 1].anim_index
+            local match = (anim_index == expected) and "OK" or "MISMATCH!"
+            log_verbose(string.format("    Emitter %d @ 0x%08X: anim_index=%d (expected %d) %s",
+                i, emitter_addr, anim_index, expected or -1, match))
         end
     end
 
@@ -530,31 +520,30 @@ function M.apply_all_edits_to_memory(silent)
     -- Apply timeline header and channels
     if EFFECT_EDITOR.timeline_header and EFFECT_EDITOR.timeline_channels then
         local timeline_addr = EFFECT_EDITOR.memory_base + EFFECT_EDITOR.header.timeline_section_ptr
-        if not silent then
-            log(string.format("  [DEBUG] timeline_section_ptr = 0x%X, timeline_addr = 0x%08X",
-                EFFECT_EDITOR.header.timeline_section_ptr, timeline_addr))
+        -- Debug: timeline info (verbose only)
+        log_verbose(string.format("  [DEBUG] timeline_section_ptr = 0x%X, timeline_addr = 0x%08X",
+            EFFECT_EDITOR.header.timeline_section_ptr, timeline_addr))
 
-            -- Debug: Log which emitters each active timeline channel references
-            log("  [DEBUG] Timeline channel emitter references:")
-            for i, ch in ipairs(EFFECT_EDITOR.timeline_channels) do
-                -- Find first active keyframe emitter_id
-                local active_emitters = {}
-                if ch.keyframes then
-                    for k = 1, ch.max_keyframe + 1 do
-                        local kf = ch.keyframes[k]
-                        if kf and kf.emitter_id and kf.emitter_id > 0 then
-                            active_emitters[kf.emitter_id] = true
-                        end
+        -- Debug: Log which emitters each active timeline channel references
+        log_verbose("  [DEBUG] Timeline channel emitter references:")
+        for i, ch in ipairs(EFFECT_EDITOR.timeline_channels) do
+            -- Find first active keyframe emitter_id
+            local active_emitters = {}
+            if ch.keyframes then
+                for k = 1, ch.max_keyframe + 1 do
+                    local kf = ch.keyframes[k]
+                    if kf and kf.emitter_id and kf.emitter_id > 0 then
+                        active_emitters[kf.emitter_id] = true
                     end
                 end
-                local emitter_list = ""
-                for eid, _ in pairs(active_emitters) do
-                    emitter_list = emitter_list .. tostring(eid) .. " "
-                end
-                if emitter_list ~= "" then
-                    log(string.format("    Channel %d (%s[%d]): max_kf=%d, emitters=[%s]",
-                        i, ch.context or "?", ch.channel_index or 0, ch.max_keyframe or 0, emitter_list))
-                end
+            end
+            local emitter_list = ""
+            for eid, _ in pairs(active_emitters) do
+                emitter_list = emitter_list .. tostring(eid) .. " "
+            end
+            if emitter_list ~= "" then
+                log_verbose(string.format("    Channel %d (%s[%d]): max_kf=%d, emitters=[%s]",
+                    i, ch.context or "?", ch.channel_index or 0, ch.max_keyframe or 0, emitter_list))
             end
         end
 
@@ -582,13 +571,14 @@ function M.apply_all_edits_to_memory(silent)
     if EFFECT_EDITOR.timing_curves and EFFECT_EDITOR.header.timing_curve_ptr ~= 0 then
         Parser.write_timing_curves_to_memory(EFFECT_EDITOR.memory_base, EFFECT_EDITOR.header.timing_curve_ptr, EFFECT_EDITOR.timing_curves)
         table.insert(applied, "timing curves")
-        -- Always log timing curve writes (important for debugging)
-        local pt_first = EFFECT_EDITOR.timing_curves.process_timeline[1] or 0
-        local pt_last = EFFECT_EDITOR.timing_curves.process_timeline[600] or 0
-        log(string.format("  Wrote timing curves at 0x%X (pt: %d..%d)",
-            EFFECT_EDITOR.header.timing_curve_ptr, pt_first, pt_last))
+        if not silent then
+            local pt_first = EFFECT_EDITOR.timing_curves.process_timeline[1] or 0
+            local pt_last = EFFECT_EDITOR.timing_curves.process_timeline[600] or 0
+            log(string.format("  Wrote timing curves at 0x%X (pt: %d..%d)",
+                EFFECT_EDITOR.header.timing_curve_ptr, pt_first, pt_last))
+        end
     else
-        log(string.format("  Timing curves NOT written: data=%s, ptr=0x%X",
+        log_verbose(string.format("  Timing curves NOT written: data=%s, ptr=0x%X",
             EFFECT_EDITOR.timing_curves and "yes" or "no",
             EFFECT_EDITOR.header.timing_curve_ptr or 0))
     end
@@ -597,12 +587,58 @@ function M.apply_all_edits_to_memory(silent)
     if EFFECT_EDITOR.effect_flags then
         Parser.write_effect_flags_to_memory(EFFECT_EDITOR.memory_base, EFFECT_EDITOR.header.effect_flags_ptr, EFFECT_EDITOR.effect_flags)
         table.insert(applied, "effect flags")
-        -- Always log effect flags (timing enable bits are critical)
-        local flags = EFFECT_EDITOR.effect_flags.flags_byte
-        local pt_enabled = (flags % 64) >= 32  -- bit 5 (0x20)
-        local at_enabled = (flags % 128) >= 64  -- bit 6 (0x40)
-        log(string.format("  Wrote effect flags: 0x%02X (timing: pt=%s, at=%s)",
-            flags, pt_enabled and "ON" or "off", at_enabled and "ON" or "off"))
+        if not silent then
+            local flags = EFFECT_EDITOR.effect_flags.flags_byte
+            local pt_enabled = (flags % 64) >= 32  -- bit 5 (0x20)
+            local at_enabled = (flags % 128) >= 64  -- bit 6 (0x40)
+            log(string.format("  Wrote effect flags: 0x%02X (timing: pt=%s, at=%s)",
+                flags, pt_enabled and "ON" or "off", at_enabled and "ON" or "off"))
+        end
+    end
+
+    -- Apply sound flags (effect_flags section bytes 0x08-0x17)
+    if EFFECT_EDITOR.sound_flags then
+        Parser.write_sound_flags_to_memory(EFFECT_EDITOR.memory_base, EFFECT_EDITOR.header.effect_flags_ptr, EFFECT_EDITOR.sound_flags)
+        table.insert(applied, "sound flags")
+        if not silent then log("  Wrote 4 sound config channels") end
+    end
+
+    -- Apply sound definition (feds section)
+    -- Note: For now, we only write if section size hasn't changed
+    -- Size changes require shifting texture section (complex, future enhancement)
+    if EFFECT_EDITOR.sound_definition then
+        local old_size = EFFECT_EDITOR.header.texture_ptr - EFFECT_EDITOR.header.sound_def_ptr
+        local new_bytes, new_size = Parser.serialize_sound_definition(EFFECT_EDITOR.sound_definition)
+
+        if new_bytes then
+            if new_size == old_size then
+                -- Same size - safe to write directly
+                local sound_addr = EFFECT_EDITOR.memory_base + EFFECT_EDITOR.header.sound_def_ptr
+                for i = 1, #new_bytes do
+                    MemUtils.write8(sound_addr + i - 1, new_bytes:byte(i))
+                end
+                table.insert(applied, "sound definition")
+                if not silent then log(string.format("  Wrote feds section (%d bytes)", new_size)) end
+            elseif new_size < old_size then
+                -- New size smaller - write and pad with zeros
+                local sound_addr = EFFECT_EDITOR.memory_base + EFFECT_EDITOR.header.sound_def_ptr
+                for i = 1, #new_bytes do
+                    MemUtils.write8(sound_addr + i - 1, new_bytes:byte(i))
+                end
+                -- Pad remaining bytes with zeros
+                for i = new_size + 1, old_size do
+                    MemUtils.write8(sound_addr + i - 1, 0)
+                end
+                table.insert(applied, "sound definition (shrunk)")
+                if not silent then log(string.format("  Wrote feds section (%d->%d bytes, padded)", new_size, old_size)) end
+            else
+                -- New size larger - would need to shift texture section
+                -- For now, log warning and skip
+                log(string.format("  WARNING: Sound section grew (%d->%d bytes) - NOT WRITTEN (would overwrite texture)",
+                    old_size, new_size))
+                log("  Remove some opcodes or save to file instead")
+            end
+        end
     end
 
     local applied_str = table.concat(applied, ", ")
@@ -737,6 +773,30 @@ function M.load_effect_file(effect_num)
     EFFECT_EDITOR.original_effect_flags = Parser.copy_effect_flags(EFFECT_EDITOR.effect_flags)
     log_verbose(string.format("  Loaded effect flags: 0x%02X", EFFECT_EDITOR.effect_flags.flags_byte))
 
+    -- Parse sound flags from file data (effect_flags section bytes 0x08-0x17)
+    log_verbose("Parsing sound flags...")
+    EFFECT_EDITOR.sound_flags = Parser.parse_sound_flags_from_data(data, EFFECT_EDITOR.header.effect_flags_ptr)
+    EFFECT_EDITOR.original_sound_flags = Parser.copy_sound_flags(EFFECT_EDITOR.sound_flags)
+    log_verbose("  Loaded 4 sound config channels")
+
+    -- Parse sound definition (feds section) from file data
+    log_verbose("Parsing sound definition...")
+    local sound_section_size = EFFECT_EDITOR.header.texture_ptr - EFFECT_EDITOR.header.sound_def_ptr
+    if sound_section_size > 0 then
+        EFFECT_EDITOR.sound_definition = Parser.parse_sound_definition_from_data(data, EFFECT_EDITOR.header.sound_def_ptr, sound_section_size)
+        EFFECT_EDITOR.original_sound_definition = Parser.copy_sound_definition(EFFECT_EDITOR.sound_definition)
+        if EFFECT_EDITOR.sound_definition then
+            log_verbose(string.format("  Loaded feds section: %d channels, resource_id=%d",
+                EFFECT_EDITOR.sound_definition.num_channels, EFFECT_EDITOR.sound_definition.resource_id))
+        else
+            log_verbose("  No valid feds section found")
+        end
+    else
+        EFFECT_EDITOR.sound_definition = nil
+        EFFECT_EDITOR.original_sound_definition = nil
+        log_verbose("  No sound definition section (size=0)")
+    end
+
     -- Store original state for structure change detection
     EFFECT_EDITOR.original_emitter_count = EFFECT_EDITOR.emitter_count
     EFFECT_EDITOR.original_header = {
@@ -836,6 +896,28 @@ function M.load_from_memory_internal(base_addr)
     EFFECT_EDITOR.effect_flags = Parser.parse_effect_flags_from_memory(base_addr, EFFECT_EDITOR.header.effect_flags_ptr)
     EFFECT_EDITOR.original_effect_flags = Parser.copy_effect_flags(EFFECT_EDITOR.effect_flags)
     log(string.format("  Loaded effect flags from memory: 0x%02X", EFFECT_EDITOR.effect_flags.flags_byte))
+
+    -- Parse sound flags from memory (effect_flags section bytes 0x08-0x17)
+    EFFECT_EDITOR.sound_flags = Parser.parse_sound_flags_from_memory(base_addr, EFFECT_EDITOR.header.effect_flags_ptr)
+    EFFECT_EDITOR.original_sound_flags = Parser.copy_sound_flags(EFFECT_EDITOR.sound_flags)
+    log("  Loaded 4 sound config channels from memory")
+
+    -- Parse sound definition (feds section) from memory
+    local sound_section_size = EFFECT_EDITOR.header.texture_ptr - EFFECT_EDITOR.header.sound_def_ptr
+    if sound_section_size > 0 then
+        EFFECT_EDITOR.sound_definition = Parser.parse_sound_definition_from_memory(base_addr, EFFECT_EDITOR.header.sound_def_ptr, sound_section_size)
+        EFFECT_EDITOR.original_sound_definition = Parser.copy_sound_definition(EFFECT_EDITOR.sound_definition)
+        if EFFECT_EDITOR.sound_definition then
+            log(string.format("  Loaded feds section: %d channels, resource_id=%d",
+                EFFECT_EDITOR.sound_definition.num_channels, EFFECT_EDITOR.sound_definition.resource_id))
+        else
+            log("  No valid feds section found")
+        end
+    else
+        EFFECT_EDITOR.sound_definition = nil
+        EFFECT_EDITOR.original_sound_definition = nil
+        log("  No sound definition section (size=0)")
+    end
 
     -- Store original state for structure change detection
     EFFECT_EDITOR.original_emitter_count = EFFECT_EDITOR.emitter_count

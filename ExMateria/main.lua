@@ -62,7 +62,7 @@ local modules_to_clear = {
     "platform",
     "config", "logging", "state", "memory_utils", "parser", "zlib_io",
     "capture", "memory_ops",
-    "helpers", "structure_tab", "particles_tab", "header_tab", "timeline_tab", "camera_tab", "color_tracks_tab", "time_scale_tab", "settings_tab",
+    "helpers", "structure_tab", "particles_tab", "header_tab", "timeline_tab", "camera_tab", "color_tracks_tab", "time_scale_tab", "settings_tab", "sound_tab",
     "load_panel", "save_panel", "session_list", "main_window",
     "curve_generators", "curve_canvas", "curves_tab",
     "workflow", "file_ops", "savestate", "session", "debug_cmds"
@@ -107,6 +107,7 @@ local camera_tab = require("camera_tab")
 local color_tracks_tab = require("color_tracks_tab")
 local time_scale_tab = require("time_scale_tab")
 local settings_tab = require("settings_tab")
+local sound_tab = require("sound_tab")
 local load_panel = require("load_panel")
 local save_panel = require("save_panel")
 local session_list = require("session_list")
@@ -145,13 +146,14 @@ timeline_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory)
 camera_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, helpers)
 color_tracks_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, helpers)
 time_scale_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, memory_ops.add_timing_curve_section, memory_ops.remove_timing_curve_section)
+sound_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory, Parser)
 load_panel.set_dependencies(memory_ops.load_effect_file, capture.arm_capture, capture.disarm_capture)
 session_list.set_dependencies(session.ee_load_session, session.ee_delete, session.ee_refresh_sessions)
 save_panel.set_dependencies(config, savestate.ee_raw_save, savestate.ee_save_bin_edited,
                             savestate.ee_save_state_only, session.ee_refresh_sessions, session_list,
                             session.ee_copy)
 curves_tab.set_dependencies(curve_canvas, curve_generators, MemUtils, Parser, memory_ops)
-main_window.set_dependencies(load_panel, save_panel, structure_tab, particles_tab, curves_tab, header_tab, timeline_tab, camera_tab, color_tracks_tab, time_scale_tab, settings_tab, workflow.ee_test, savestate.ee_save_bin_edited, session.ee_load_session)
+main_window.set_dependencies(load_panel, save_panel, structure_tab, particles_tab, curves_tab, header_tab, timeline_tab, camera_tab, color_tracks_tab, time_scale_tab, sound_tab, settings_tab, workflow.ee_test, savestate.ee_save_bin_edited, session.ee_load_session)
 
 -- Set up command modules (all use unified apply_all_edits_to_memory)
 workflow.set_dependencies(config, logging, MemUtils, memory_ops.apply_all_edits_to_memory, savestate.ee_reload)

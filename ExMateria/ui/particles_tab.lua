@@ -242,7 +242,6 @@ function M.draw_control_bytes(e, i)
         -- Combo items as null-separated strings (PCSX-Redux imgui binding format)
         local ANCHOR_ITEMS = "WORLD\0CURSOR\0ORIGIN\0TARGET\0PARENT\0CAMERA\0TRACKED\0"
         local SPREAD_ITEMS = "Sphere\0Box\0"
-        local CHILD_ITEMS = "Disabled\0Mode 1\0Mode 2\0Disabled(3)\0"
         local HOMING_ITEMS = "Disabled\00016 units\00032 units\00048 units\0"
 
         -- Animation indices (sliders)
@@ -315,31 +314,6 @@ function M.draw_control_bytes(e, i)
                 e.emitter_flags_hi = e.emitter_flags_hi - (math.floor(e.emitter_flags_hi / 4) % 2 == 1 and 4 or 0)
             end
         end
-
-        imgui.Separator()
-        imgui.TextUnformatted("Child Emitters:")
-
-        -- child_death_mode: emitter_flags_lo bits 0-1
-        local child_death = e.emitter_flags_lo % 4
-        c, v = imgui.Combo("On Death##cb" .. i, child_death, CHILD_ITEMS)
-        if c then
-            e.emitter_flags_lo = (math.floor(e.emitter_flags_lo / 4) * 4) + v
-        end
-
-        -- child_midlife_mode: emitter_flags_lo bits 2-3
-        local child_mid = math.floor(e.emitter_flags_lo / 4) % 4
-        c, v = imgui.Combo("Mid-Life##cb" .. i, child_mid, CHILD_ITEMS)
-        if c then
-            local base = e.emitter_flags_lo % 4
-            local upper = math.floor(e.emitter_flags_lo / 16) * 16
-            e.emitter_flags_lo = base + (v * 4) + upper
-        end
-
-        -- Child emitter indices (read from bytes 0xC0-0xC1)
-        c, v = imgui.SliderInt("Death Emitter##cb" .. i, e.child_emitter_on_death, 0, 15)
-        if c then e.child_emitter_on_death = v end
-        c, v = imgui.SliderInt("Mid-Life Emitter##cb" .. i, e.child_emitter_mid_life, 0, 15)
-        if c then e.child_emitter_mid_life = v end
 
         imgui.Separator()
         imgui.TextUnformatted("Homing:")
@@ -706,14 +680,33 @@ end
 
 function M.draw_child_emitters(e, i)
     if imgui.TreeNode("Child Emitters##" .. i) then
-        imgui.TextUnformatted(string.format("On Death: %d", e.child_emitter_on_death))
-        imgui.TextUnformatted(string.format("Mid-Life: %d", e.child_emitter_mid_life))
-
-        imgui.Separator()
         local c, v
-        c, v = slider_int16("On Death##child" .. i, e.child_emitter_on_death, 0, 15)
+        local CHILD_ITEMS = "Disabled\0Mode 1\0Mode 2\0Disabled(3)\0"
+
+        -- On Death mode dropdown (emitter_flags_lo bits 0-1)
+        local child_death = e.emitter_flags_lo % 4
+        c, v = imgui.Combo("On Death Mode##child" .. i, child_death, CHILD_ITEMS)
+        if c then
+            e.emitter_flags_lo = (math.floor(e.emitter_flags_lo / 4) * 4) + v
+        end
+
+        -- Death Emitter index slider
+        c, v = imgui.SliderInt("Death Emitter##child" .. i, e.child_emitter_on_death, 0, 15)
         if c then e.child_emitter_on_death = v end
-        c, v = slider_int16("Mid-Life##child" .. i, e.child_emitter_mid_life, 0, 15)
+
+        imgui.Spacing()
+
+        -- Mid-Life mode dropdown (emitter_flags_lo bits 2-3)
+        local child_mid = math.floor(e.emitter_flags_lo / 4) % 4
+        c, v = imgui.Combo("Mid-Life Mode##child" .. i, child_mid, CHILD_ITEMS)
+        if c then
+            local base = e.emitter_flags_lo % 4
+            local upper = math.floor(e.emitter_flags_lo / 16) * 16
+            e.emitter_flags_lo = base + (v * 4) + upper
+        end
+
+        -- Mid-Life Emitter index slider
+        c, v = imgui.SliderInt("Mid-Life Emitter##child" .. i, e.child_emitter_mid_life, 0, 15)
         if c then e.child_emitter_mid_life = v end
 
         imgui.TreePop()

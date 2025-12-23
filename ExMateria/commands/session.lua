@@ -208,6 +208,33 @@ function M.ee_load_session(name)
                                 logging.log("  Effect flags parsing functions not available")
                             end
 
+                            -- Parse sound flags from .bin data (effect_flags section bytes 0x08-0x17)
+                            if Parser.parse_sound_flags_from_data then
+                                EFFECT_EDITOR.sound_flags = Parser.parse_sound_flags_from_data(
+                                    bin_data,
+                                    EFFECT_EDITOR.header.effect_flags_ptr
+                                )
+                                EFFECT_EDITOR.original_sound_flags = Parser.copy_sound_flags(EFFECT_EDITOR.sound_flags)
+                                logging.log("  Parsed 4 sound config channels from .bin")
+                            end
+
+                            -- Parse sound definition (feds section) from .bin data
+                            if Parser.parse_sound_definition_from_data then
+                                local sound_section_size = EFFECT_EDITOR.header.texture_ptr - EFFECT_EDITOR.header.sound_def_ptr
+                                if sound_section_size > 0 then
+                                    EFFECT_EDITOR.sound_definition = Parser.parse_sound_definition_from_data(
+                                        bin_data,
+                                        EFFECT_EDITOR.header.sound_def_ptr,
+                                        sound_section_size
+                                    )
+                                    EFFECT_EDITOR.original_sound_definition = Parser.copy_sound_definition(EFFECT_EDITOR.sound_definition)
+                                    if EFFECT_EDITOR.sound_definition then
+                                        logging.log(string.format("  Parsed feds section from .bin: %d channels",
+                                            EFFECT_EDITOR.sound_definition.num_channels))
+                                    end
+                                end
+                            end
+
                             EFFECT_EDITOR.file_name = name .. ".bin"
                             logging.log(string.format("  Parsed %d emitters from .bin", EFFECT_EDITOR.emitter_count))
 
