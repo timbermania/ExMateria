@@ -2,6 +2,7 @@
 -- Parse E###.BIN effect file headers, sections, and emitters
 
 local mem = require("memory_utils")
+local FieldSchema = require("field_schema")
 
 local M = {}
 
@@ -186,14 +187,7 @@ end
 
 -- Parse particle system header (20 bytes at effect_data_ptr)
 function M.parse_particle_header_from_data(data, offset)
-    return {
-        constant = mem.buf_read16(data, offset + 0x00),
-        emitter_count = mem.buf_read16(data, offset + 0x02),
-        gravity_x = mem.buf_read32(data, offset + 0x04),
-        gravity_y = mem.buf_read32(data, offset + 0x08),
-        gravity_z = mem.buf_read32(data, offset + 0x0C),
-        inertia_threshold = mem.buf_read32(data, offset + 0x10)
-    }
+    return FieldSchema.parse_from_buffer(FieldSchema.PARTICLE_HEADER_SCHEMA, data, offset)
 end
 
 --------------------------------------------------------------------------------
@@ -202,141 +196,7 @@ end
 
 -- Parse single emitter (196 bytes) from file data
 function M.parse_emitter_from_data(data, offset)
-    local e = {}
-
-    -- Core Control Bytes (0x00-0x0F)
-    e.byte_00 = mem.buf_read8(data, offset + 0x00)
-    e.anim_index = mem.buf_read8(data, offset + 0x01)
-    e.motion_type_flag = mem.buf_read8(data, offset + 0x02)
-    e.animation_target_flag = mem.buf_read8(data, offset + 0x03)
-    e.anim_param = mem.buf_read8(data, offset + 0x04)
-    e.byte_05 = mem.buf_read8(data, offset + 0x05)
-    e.emitter_flags_lo = mem.buf_read8(data, offset + 0x06)
-    e.emitter_flags_hi = mem.buf_read8(data, offset + 0x07)
-
-    -- Curve indices (0x08-0x0F)
-    e.curve_indices_08 = mem.buf_read8(data, offset + 0x08)
-    e.curve_indices_09 = mem.buf_read8(data, offset + 0x09)
-    e.curve_indices_0A = mem.buf_read8(data, offset + 0x0A)
-    e.curve_indices_0B = mem.buf_read8(data, offset + 0x0B)
-    e.curve_indices_0C = mem.buf_read8(data, offset + 0x0C)
-    e.curve_indices_0D = mem.buf_read8(data, offset + 0x0D)
-    e.curve_indices_0E = mem.buf_read8(data, offset + 0x0E)
-    e.curve_indices_0F = mem.buf_read8(data, offset + 0x0F)
-
-    -- Color Curves (0x10-0x13)
-    e.color_curves_rg = mem.buf_read8(data, offset + 0x10)
-    e.color_curves_b = mem.buf_read8(data, offset + 0x11)
-
-    -- Position (0x14-0x1F) - 16-bit signed
-    e.start_position_x = mem.buf_read16s(data, offset + 0x14)
-    e.start_position_y = mem.buf_read16s(data, offset + 0x16)
-    e.start_position_z = mem.buf_read16s(data, offset + 0x18)
-    e.end_position_x = mem.buf_read16s(data, offset + 0x1A)
-    e.end_position_y = mem.buf_read16s(data, offset + 0x1C)
-    e.end_position_z = mem.buf_read16s(data, offset + 0x1E)
-
-    -- Particle Spread (0x20-0x2B)
-    e.spread_x_start = mem.buf_read16s(data, offset + 0x20)
-    e.spread_y_start = mem.buf_read16s(data, offset + 0x22)
-    e.spread_z_start = mem.buf_read16s(data, offset + 0x24)
-    e.spread_x_end = mem.buf_read16s(data, offset + 0x26)
-    e.spread_y_end = mem.buf_read16s(data, offset + 0x28)
-    e.spread_z_end = mem.buf_read16s(data, offset + 0x2A)
-
-    -- Velocity Base Angles (0x2C-0x37)
-    e.velocity_base_angle_x_start = mem.buf_read16s(data, offset + 0x2C)
-    e.velocity_base_angle_y_start = mem.buf_read16s(data, offset + 0x2E)
-    e.velocity_base_angle_z_start = mem.buf_read16s(data, offset + 0x30)
-    e.velocity_base_angle_x_end = mem.buf_read16s(data, offset + 0x32)
-    e.velocity_base_angle_y_end = mem.buf_read16s(data, offset + 0x34)
-    e.velocity_base_angle_z_end = mem.buf_read16s(data, offset + 0x36)
-
-    -- Velocity Direction Spread (0x38-0x43)
-    e.velocity_direction_spread_x_start = mem.buf_read16s(data, offset + 0x38)
-    e.velocity_direction_spread_y_start = mem.buf_read16s(data, offset + 0x3A)
-    e.velocity_direction_spread_z_start = mem.buf_read16s(data, offset + 0x3C)
-    e.velocity_direction_spread_x_end = mem.buf_read16s(data, offset + 0x3E)
-    e.velocity_direction_spread_y_end = mem.buf_read16s(data, offset + 0x40)
-    e.velocity_direction_spread_z_end = mem.buf_read16s(data, offset + 0x42)
-
-    -- Physics: Inertia (0x44-0x4B)
-    e.inertia_min_start = mem.buf_read16s(data, offset + 0x44)
-    e.inertia_max_start = mem.buf_read16s(data, offset + 0x46)
-    e.inertia_min_end = mem.buf_read16s(data, offset + 0x48)
-    e.inertia_max_end = mem.buf_read16s(data, offset + 0x4A)
-
-    -- Physics: Weight (0x54-0x5B) - skip dead code 0x4C-0x53
-    e.weight_min_start = mem.buf_read16s(data, offset + 0x54)
-    e.weight_max_start = mem.buf_read16s(data, offset + 0x56)
-    e.weight_min_end = mem.buf_read16s(data, offset + 0x58)
-    e.weight_max_end = mem.buf_read16s(data, offset + 0x5A)
-
-    -- Radial Velocity (0x5C-0x63)
-    e.radial_velocity_min_start = mem.buf_read16s(data, offset + 0x5C)
-    e.radial_velocity_max_start = mem.buf_read16s(data, offset + 0x5E)
-    e.radial_velocity_min_end = mem.buf_read16s(data, offset + 0x60)
-    e.radial_velocity_max_end = mem.buf_read16s(data, offset + 0x62)
-
-    -- Acceleration (0x64-0x7B)
-    e.acceleration_x_min_start = mem.buf_read16s(data, offset + 0x64)
-    e.acceleration_x_max_start = mem.buf_read16s(data, offset + 0x66)
-    e.acceleration_y_min_start = mem.buf_read16s(data, offset + 0x68)
-    e.acceleration_y_max_start = mem.buf_read16s(data, offset + 0x6A)
-    e.acceleration_z_min_start = mem.buf_read16s(data, offset + 0x6C)
-    e.acceleration_z_max_start = mem.buf_read16s(data, offset + 0x6E)
-    e.acceleration_x_min_end = mem.buf_read16s(data, offset + 0x70)
-    e.acceleration_x_max_end = mem.buf_read16s(data, offset + 0x72)
-    e.acceleration_y_min_end = mem.buf_read16s(data, offset + 0x74)
-    e.acceleration_y_max_end = mem.buf_read16s(data, offset + 0x76)
-    e.acceleration_z_min_end = mem.buf_read16s(data, offset + 0x78)
-    e.acceleration_z_max_end = mem.buf_read16s(data, offset + 0x7A)
-
-    -- Drag (0x7C-0x93)
-    e.drag_x_min_start = mem.buf_read16s(data, offset + 0x7C)
-    e.drag_x_max_start = mem.buf_read16s(data, offset + 0x7E)
-    e.drag_y_min_start = mem.buf_read16s(data, offset + 0x80)
-    e.drag_y_max_start = mem.buf_read16s(data, offset + 0x82)
-    e.drag_z_min_start = mem.buf_read16s(data, offset + 0x84)
-    e.drag_z_max_start = mem.buf_read16s(data, offset + 0x86)
-    e.drag_x_min_end = mem.buf_read16s(data, offset + 0x88)
-    e.drag_x_max_end = mem.buf_read16s(data, offset + 0x8A)
-    e.drag_y_min_end = mem.buf_read16s(data, offset + 0x8C)
-    e.drag_y_max_end = mem.buf_read16s(data, offset + 0x8E)
-    e.drag_z_min_end = mem.buf_read16s(data, offset + 0x90)
-    e.drag_z_max_end = mem.buf_read16s(data, offset + 0x92)
-
-    -- Lifetime (0x94-0x9B)
-    e.lifetime_min_start = mem.buf_read16s(data, offset + 0x94)
-    e.lifetime_max_start = mem.buf_read16s(data, offset + 0x96)
-    e.lifetime_min_end = mem.buf_read16s(data, offset + 0x98)
-    e.lifetime_max_end = mem.buf_read16s(data, offset + 0x9A)
-
-    -- Target Offset (0x9C-0xA7)
-    e.target_offset_x_start = mem.buf_read16s(data, offset + 0x9C)
-    e.target_offset_y_start = mem.buf_read16s(data, offset + 0x9E)
-    e.target_offset_z_start = mem.buf_read16s(data, offset + 0xA0)
-    e.target_offset_x_end = mem.buf_read16s(data, offset + 0xA2)
-    e.target_offset_y_end = mem.buf_read16s(data, offset + 0xA4)
-    e.target_offset_z_end = mem.buf_read16s(data, offset + 0xA6)
-
-    -- Spawn Control (0xB0-0xB7)
-    e.particle_count_start = mem.buf_read16s(data, offset + 0xB0)
-    e.particle_count_end = mem.buf_read16s(data, offset + 0xB2)
-    e.spawn_interval_start = mem.buf_read16s(data, offset + 0xB4)
-    e.spawn_interval_end = mem.buf_read16s(data, offset + 0xB6)
-
-    -- Homing (0xB8-0xBF)
-    e.homing_strength_min_start = mem.buf_read16s(data, offset + 0xB8)
-    e.homing_strength_max_start = mem.buf_read16s(data, offset + 0xBA)
-    e.homing_strength_min_end = mem.buf_read16s(data, offset + 0xBC)
-    e.homing_strength_max_end = mem.buf_read16s(data, offset + 0xBE)
-
-    -- Child Emitters (0xC0-0xC1)
-    e.child_emitter_on_death = mem.buf_read8(data, offset + 0xC0)
-    e.child_emitter_mid_life = mem.buf_read8(data, offset + 0xC1)
-
-    return e
+    return FieldSchema.parse_from_buffer(FieldSchema.EMITTER_SCHEMA, data, offset)
 end
 
 -- Parse all emitters from file data
@@ -357,141 +217,7 @@ end
 
 -- Parse single emitter from PSX memory (not file buffer)
 function M.parse_emitter_from_memory(base_addr)
-    local e = {}
-
-    -- Core Control Bytes (0x00-0x0F)
-    e.byte_00 = mem.read8(base_addr + 0x00)
-    e.anim_index = mem.read8(base_addr + 0x01)
-    e.motion_type_flag = mem.read8(base_addr + 0x02)
-    e.animation_target_flag = mem.read8(base_addr + 0x03)
-    e.anim_param = mem.read8(base_addr + 0x04)
-    e.byte_05 = mem.read8(base_addr + 0x05)
-    e.emitter_flags_lo = mem.read8(base_addr + 0x06)
-    e.emitter_flags_hi = mem.read8(base_addr + 0x07)
-
-    -- Curve indices
-    e.curve_indices_08 = mem.read8(base_addr + 0x08)
-    e.curve_indices_09 = mem.read8(base_addr + 0x09)
-    e.curve_indices_0A = mem.read8(base_addr + 0x0A)
-    e.curve_indices_0B = mem.read8(base_addr + 0x0B)
-    e.curve_indices_0C = mem.read8(base_addr + 0x0C)
-    e.curve_indices_0D = mem.read8(base_addr + 0x0D)
-    e.curve_indices_0E = mem.read8(base_addr + 0x0E)
-    e.curve_indices_0F = mem.read8(base_addr + 0x0F)
-
-    -- Color Curves
-    e.color_curves_rg = mem.read8(base_addr + 0x10)
-    e.color_curves_b = mem.read8(base_addr + 0x11)
-
-    -- Position (signed 16-bit)
-    e.start_position_x = mem.read16s(base_addr + 0x14)
-    e.start_position_y = mem.read16s(base_addr + 0x16)
-    e.start_position_z = mem.read16s(base_addr + 0x18)
-    e.end_position_x = mem.read16s(base_addr + 0x1A)
-    e.end_position_y = mem.read16s(base_addr + 0x1C)
-    e.end_position_z = mem.read16s(base_addr + 0x1E)
-
-    -- Spread
-    e.spread_x_start = mem.read16s(base_addr + 0x20)
-    e.spread_y_start = mem.read16s(base_addr + 0x22)
-    e.spread_z_start = mem.read16s(base_addr + 0x24)
-    e.spread_x_end = mem.read16s(base_addr + 0x26)
-    e.spread_y_end = mem.read16s(base_addr + 0x28)
-    e.spread_z_end = mem.read16s(base_addr + 0x2A)
-
-    -- Velocity Base Angles
-    e.velocity_base_angle_x_start = mem.read16s(base_addr + 0x2C)
-    e.velocity_base_angle_y_start = mem.read16s(base_addr + 0x2E)
-    e.velocity_base_angle_z_start = mem.read16s(base_addr + 0x30)
-    e.velocity_base_angle_x_end = mem.read16s(base_addr + 0x32)
-    e.velocity_base_angle_y_end = mem.read16s(base_addr + 0x34)
-    e.velocity_base_angle_z_end = mem.read16s(base_addr + 0x36)
-
-    -- Velocity Direction Spread
-    e.velocity_direction_spread_x_start = mem.read16s(base_addr + 0x38)
-    e.velocity_direction_spread_y_start = mem.read16s(base_addr + 0x3A)
-    e.velocity_direction_spread_z_start = mem.read16s(base_addr + 0x3C)
-    e.velocity_direction_spread_x_end = mem.read16s(base_addr + 0x3E)
-    e.velocity_direction_spread_y_end = mem.read16s(base_addr + 0x40)
-    e.velocity_direction_spread_z_end = mem.read16s(base_addr + 0x42)
-
-    -- Inertia
-    e.inertia_min_start = mem.read16s(base_addr + 0x44)
-    e.inertia_max_start = mem.read16s(base_addr + 0x46)
-    e.inertia_min_end = mem.read16s(base_addr + 0x48)
-    e.inertia_max_end = mem.read16s(base_addr + 0x4A)
-
-    -- Weight
-    e.weight_min_start = mem.read16s(base_addr + 0x54)
-    e.weight_max_start = mem.read16s(base_addr + 0x56)
-    e.weight_min_end = mem.read16s(base_addr + 0x58)
-    e.weight_max_end = mem.read16s(base_addr + 0x5A)
-
-    -- Radial Velocity
-    e.radial_velocity_min_start = mem.read16s(base_addr + 0x5C)
-    e.radial_velocity_max_start = mem.read16s(base_addr + 0x5E)
-    e.radial_velocity_min_end = mem.read16s(base_addr + 0x60)
-    e.radial_velocity_max_end = mem.read16s(base_addr + 0x62)
-
-    -- Acceleration
-    e.acceleration_x_min_start = mem.read16s(base_addr + 0x64)
-    e.acceleration_x_max_start = mem.read16s(base_addr + 0x66)
-    e.acceleration_y_min_start = mem.read16s(base_addr + 0x68)
-    e.acceleration_y_max_start = mem.read16s(base_addr + 0x6A)
-    e.acceleration_z_min_start = mem.read16s(base_addr + 0x6C)
-    e.acceleration_z_max_start = mem.read16s(base_addr + 0x6E)
-    e.acceleration_x_min_end = mem.read16s(base_addr + 0x70)
-    e.acceleration_x_max_end = mem.read16s(base_addr + 0x72)
-    e.acceleration_y_min_end = mem.read16s(base_addr + 0x74)
-    e.acceleration_y_max_end = mem.read16s(base_addr + 0x76)
-    e.acceleration_z_min_end = mem.read16s(base_addr + 0x78)
-    e.acceleration_z_max_end = mem.read16s(base_addr + 0x7A)
-
-    -- Drag
-    e.drag_x_min_start = mem.read16s(base_addr + 0x7C)
-    e.drag_x_max_start = mem.read16s(base_addr + 0x7E)
-    e.drag_y_min_start = mem.read16s(base_addr + 0x80)
-    e.drag_y_max_start = mem.read16s(base_addr + 0x82)
-    e.drag_z_min_start = mem.read16s(base_addr + 0x84)
-    e.drag_z_max_start = mem.read16s(base_addr + 0x86)
-    e.drag_x_min_end = mem.read16s(base_addr + 0x88)
-    e.drag_x_max_end = mem.read16s(base_addr + 0x8A)
-    e.drag_y_min_end = mem.read16s(base_addr + 0x8C)
-    e.drag_y_max_end = mem.read16s(base_addr + 0x8E)
-    e.drag_z_min_end = mem.read16s(base_addr + 0x90)
-    e.drag_z_max_end = mem.read16s(base_addr + 0x92)
-
-    -- Lifetime
-    e.lifetime_min_start = mem.read16s(base_addr + 0x94)
-    e.lifetime_max_start = mem.read16s(base_addr + 0x96)
-    e.lifetime_min_end = mem.read16s(base_addr + 0x98)
-    e.lifetime_max_end = mem.read16s(base_addr + 0x9A)
-
-    -- Target Offset
-    e.target_offset_x_start = mem.read16s(base_addr + 0x9C)
-    e.target_offset_y_start = mem.read16s(base_addr + 0x9E)
-    e.target_offset_z_start = mem.read16s(base_addr + 0xA0)
-    e.target_offset_x_end = mem.read16s(base_addr + 0xA2)
-    e.target_offset_y_end = mem.read16s(base_addr + 0xA4)
-    e.target_offset_z_end = mem.read16s(base_addr + 0xA6)
-
-    -- Spawn Control
-    e.particle_count_start = mem.read16s(base_addr + 0xB0)
-    e.particle_count_end = mem.read16s(base_addr + 0xB2)
-    e.spawn_interval_start = mem.read16s(base_addr + 0xB4)
-    e.spawn_interval_end = mem.read16s(base_addr + 0xB6)
-
-    -- Homing
-    e.homing_strength_min_start = mem.read16s(base_addr + 0xB8)
-    e.homing_strength_max_start = mem.read16s(base_addr + 0xBA)
-    e.homing_strength_min_end = mem.read16s(base_addr + 0xBC)
-    e.homing_strength_max_end = mem.read16s(base_addr + 0xBE)
-
-    -- Child Emitters
-    e.child_emitter_on_death = mem.read8(base_addr + 0xC0)
-    e.child_emitter_mid_life = mem.read8(base_addr + 0xC1)
-
-    return e
+    return FieldSchema.parse_from_memory(FieldSchema.EMITTER_SCHEMA, base_addr)
 end
 
 -- Parse all emitters from PSX memory
@@ -513,282 +239,15 @@ end
 -- Write single emitter to PSX memory
 function M.write_emitter_to_memory(base_addr, emitter_index, e)
     local addr = base_addr + 0x14 + (emitter_index * 0xC4)
-
-    -- Core Control Bytes (0x00-0x0F)
-    mem.write8(addr + 0x00, e.byte_00)
-    mem.write8(addr + 0x01, e.anim_index)
-    mem.write8(addr + 0x02, e.motion_type_flag)
-    mem.write8(addr + 0x03, e.animation_target_flag)
-    mem.write8(addr + 0x04, e.anim_param)
-    mem.write8(addr + 0x05, e.byte_05)
-    mem.write8(addr + 0x06, e.emitter_flags_lo)
-    mem.write8(addr + 0x07, e.emitter_flags_hi)
-
-    -- Curve indices
-    mem.write8(addr + 0x08, e.curve_indices_08)
-    mem.write8(addr + 0x09, e.curve_indices_09)
-    mem.write8(addr + 0x0A, e.curve_indices_0A)
-    mem.write8(addr + 0x0B, e.curve_indices_0B)
-    mem.write8(addr + 0x0C, e.curve_indices_0C)
-    mem.write8(addr + 0x0D, e.curve_indices_0D)
-    mem.write8(addr + 0x0E, e.curve_indices_0E)
-    mem.write8(addr + 0x0F, e.curve_indices_0F)
-
-    -- Color Curves
-    mem.write8(addr + 0x10, e.color_curves_rg)
-    mem.write8(addr + 0x11, e.color_curves_b)
-
-    -- Position (0x14-0x1F)
-    mem.write16(addr + 0x14, e.start_position_x)
-    mem.write16(addr + 0x16, e.start_position_y)
-    mem.write16(addr + 0x18, e.start_position_z)
-    mem.write16(addr + 0x1A, e.end_position_x)
-    mem.write16(addr + 0x1C, e.end_position_y)
-    mem.write16(addr + 0x1E, e.end_position_z)
-
-    -- Spread (0x20-0x2B)
-    mem.write16(addr + 0x20, e.spread_x_start)
-    mem.write16(addr + 0x22, e.spread_y_start)
-    mem.write16(addr + 0x24, e.spread_z_start)
-    mem.write16(addr + 0x26, e.spread_x_end)
-    mem.write16(addr + 0x28, e.spread_y_end)
-    mem.write16(addr + 0x2A, e.spread_z_end)
-
-    -- Velocity Base Angles (0x2C-0x37)
-    mem.write16(addr + 0x2C, e.velocity_base_angle_x_start)
-    mem.write16(addr + 0x2E, e.velocity_base_angle_y_start)
-    mem.write16(addr + 0x30, e.velocity_base_angle_z_start)
-    mem.write16(addr + 0x32, e.velocity_base_angle_x_end)
-    mem.write16(addr + 0x34, e.velocity_base_angle_y_end)
-    mem.write16(addr + 0x36, e.velocity_base_angle_z_end)
-
-    -- Velocity Direction Spread (0x38-0x43)
-    mem.write16(addr + 0x38, e.velocity_direction_spread_x_start)
-    mem.write16(addr + 0x3A, e.velocity_direction_spread_y_start)
-    mem.write16(addr + 0x3C, e.velocity_direction_spread_z_start)
-    mem.write16(addr + 0x3E, e.velocity_direction_spread_x_end)
-    mem.write16(addr + 0x40, e.velocity_direction_spread_y_end)
-    mem.write16(addr + 0x42, e.velocity_direction_spread_z_end)
-
-    -- Inertia (0x44-0x4B)
-    mem.write16(addr + 0x44, e.inertia_min_start)
-    mem.write16(addr + 0x46, e.inertia_max_start)
-    mem.write16(addr + 0x48, e.inertia_min_end)
-    mem.write16(addr + 0x4A, e.inertia_max_end)
-
-    -- Weight (0x54-0x5B)
-    mem.write16(addr + 0x54, e.weight_min_start)
-    mem.write16(addr + 0x56, e.weight_max_start)
-    mem.write16(addr + 0x58, e.weight_min_end)
-    mem.write16(addr + 0x5A, e.weight_max_end)
-
-    -- Radial Velocity (0x5C-0x63)
-    mem.write16(addr + 0x5C, e.radial_velocity_min_start)
-    mem.write16(addr + 0x5E, e.radial_velocity_max_start)
-    mem.write16(addr + 0x60, e.radial_velocity_min_end)
-    mem.write16(addr + 0x62, e.radial_velocity_max_end)
-
-    -- Acceleration (0x64-0x7B)
-    mem.write16(addr + 0x64, e.acceleration_x_min_start)
-    mem.write16(addr + 0x66, e.acceleration_x_max_start)
-    mem.write16(addr + 0x68, e.acceleration_y_min_start)
-    mem.write16(addr + 0x6A, e.acceleration_y_max_start)
-    mem.write16(addr + 0x6C, e.acceleration_z_min_start)
-    mem.write16(addr + 0x6E, e.acceleration_z_max_start)
-    mem.write16(addr + 0x70, e.acceleration_x_min_end)
-    mem.write16(addr + 0x72, e.acceleration_x_max_end)
-    mem.write16(addr + 0x74, e.acceleration_y_min_end)
-    mem.write16(addr + 0x76, e.acceleration_y_max_end)
-    mem.write16(addr + 0x78, e.acceleration_z_min_end)
-    mem.write16(addr + 0x7A, e.acceleration_z_max_end)
-
-    -- Drag (0x7C-0x93)
-    mem.write16(addr + 0x7C, e.drag_x_min_start)
-    mem.write16(addr + 0x7E, e.drag_x_max_start)
-    mem.write16(addr + 0x80, e.drag_y_min_start)
-    mem.write16(addr + 0x82, e.drag_y_max_start)
-    mem.write16(addr + 0x84, e.drag_z_min_start)
-    mem.write16(addr + 0x86, e.drag_z_max_start)
-    mem.write16(addr + 0x88, e.drag_x_min_end)
-    mem.write16(addr + 0x8A, e.drag_x_max_end)
-    mem.write16(addr + 0x8C, e.drag_y_min_end)
-    mem.write16(addr + 0x8E, e.drag_y_max_end)
-    mem.write16(addr + 0x90, e.drag_z_min_end)
-    mem.write16(addr + 0x92, e.drag_z_max_end)
-
-    -- Lifetime (0x94-0x9B)
-    mem.write16(addr + 0x94, e.lifetime_min_start)
-    mem.write16(addr + 0x96, e.lifetime_max_start)
-    mem.write16(addr + 0x98, e.lifetime_min_end)
-    mem.write16(addr + 0x9A, e.lifetime_max_end)
-
-    -- Target Offset (0x9C-0xA7)
-    mem.write16(addr + 0x9C, e.target_offset_x_start)
-    mem.write16(addr + 0x9E, e.target_offset_y_start)
-    mem.write16(addr + 0xA0, e.target_offset_z_start)
-    mem.write16(addr + 0xA2, e.target_offset_x_end)
-    mem.write16(addr + 0xA4, e.target_offset_y_end)
-    mem.write16(addr + 0xA6, e.target_offset_z_end)
-
-    -- Spawn Control (0xB0-0xB7)
-    mem.write16(addr + 0xB0, e.particle_count_start)
-    mem.write16(addr + 0xB2, e.particle_count_end)
-    mem.write16(addr + 0xB4, e.spawn_interval_start)
-    mem.write16(addr + 0xB6, e.spawn_interval_end)
-
-    -- Homing (0xB8-0xBF)
-    mem.write16(addr + 0xB8, e.homing_strength_min_start)
-    mem.write16(addr + 0xBA, e.homing_strength_max_start)
-    mem.write16(addr + 0xBC, e.homing_strength_min_end)
-    mem.write16(addr + 0xBE, e.homing_strength_max_end)
-
-    -- Child Emitters (0xC0-0xC1)
-    mem.write8(addr + 0xC0, e.child_emitter_on_death)
-    mem.write8(addr + 0xC1, e.child_emitter_mid_life)
-
+    FieldSchema.write_to_memory(FieldSchema.EMITTER_SCHEMA, addr, e)
     return addr
 end
 
 -- Deep copy an emitter table with a new index
 function M.copy_emitter(source, new_index)
-    local e = {}
-
-    -- Core Control Bytes
-    e.byte_00 = source.byte_00
-    e.anim_index = source.anim_index
-    e.motion_type_flag = source.motion_type_flag
-    e.animation_target_flag = source.animation_target_flag
-    e.anim_param = source.anim_param
-    e.byte_05 = source.byte_05
-    e.emitter_flags_lo = source.emitter_flags_lo
-    e.emitter_flags_hi = source.emitter_flags_hi
-
-    -- Curve indices
-    e.curve_indices_08 = source.curve_indices_08
-    e.curve_indices_09 = source.curve_indices_09
-    e.curve_indices_0A = source.curve_indices_0A
-    e.curve_indices_0B = source.curve_indices_0B
-    e.curve_indices_0C = source.curve_indices_0C
-    e.curve_indices_0D = source.curve_indices_0D
-    e.curve_indices_0E = source.curve_indices_0E
-    e.curve_indices_0F = source.curve_indices_0F
-
-    -- Color Curves
-    e.color_curves_rg = source.color_curves_rg
-    e.color_curves_b = source.color_curves_b
-
-    -- Position
-    e.start_position_x = source.start_position_x
-    e.start_position_y = source.start_position_y
-    e.start_position_z = source.start_position_z
-    e.end_position_x = source.end_position_x
-    e.end_position_y = source.end_position_y
-    e.end_position_z = source.end_position_z
-
-    -- Spread
-    e.spread_x_start = source.spread_x_start
-    e.spread_y_start = source.spread_y_start
-    e.spread_z_start = source.spread_z_start
-    e.spread_x_end = source.spread_x_end
-    e.spread_y_end = source.spread_y_end
-    e.spread_z_end = source.spread_z_end
-
-    -- Velocity Base Angles
-    e.velocity_base_angle_x_start = source.velocity_base_angle_x_start
-    e.velocity_base_angle_y_start = source.velocity_base_angle_y_start
-    e.velocity_base_angle_z_start = source.velocity_base_angle_z_start
-    e.velocity_base_angle_x_end = source.velocity_base_angle_x_end
-    e.velocity_base_angle_y_end = source.velocity_base_angle_y_end
-    e.velocity_base_angle_z_end = source.velocity_base_angle_z_end
-
-    -- Velocity Direction Spread
-    e.velocity_direction_spread_x_start = source.velocity_direction_spread_x_start
-    e.velocity_direction_spread_y_start = source.velocity_direction_spread_y_start
-    e.velocity_direction_spread_z_start = source.velocity_direction_spread_z_start
-    e.velocity_direction_spread_x_end = source.velocity_direction_spread_x_end
-    e.velocity_direction_spread_y_end = source.velocity_direction_spread_y_end
-    e.velocity_direction_spread_z_end = source.velocity_direction_spread_z_end
-
-    -- Inertia
-    e.inertia_min_start = source.inertia_min_start
-    e.inertia_max_start = source.inertia_max_start
-    e.inertia_min_end = source.inertia_min_end
-    e.inertia_max_end = source.inertia_max_end
-
-    -- Weight
-    e.weight_min_start = source.weight_min_start
-    e.weight_max_start = source.weight_max_start
-    e.weight_min_end = source.weight_min_end
-    e.weight_max_end = source.weight_max_end
-
-    -- Radial Velocity
-    e.radial_velocity_min_start = source.radial_velocity_min_start
-    e.radial_velocity_max_start = source.radial_velocity_max_start
-    e.radial_velocity_min_end = source.radial_velocity_min_end
-    e.radial_velocity_max_end = source.radial_velocity_max_end
-
-    -- Acceleration
-    e.acceleration_x_min_start = source.acceleration_x_min_start
-    e.acceleration_x_max_start = source.acceleration_x_max_start
-    e.acceleration_y_min_start = source.acceleration_y_min_start
-    e.acceleration_y_max_start = source.acceleration_y_max_start
-    e.acceleration_z_min_start = source.acceleration_z_min_start
-    e.acceleration_z_max_start = source.acceleration_z_max_start
-    e.acceleration_x_min_end = source.acceleration_x_min_end
-    e.acceleration_x_max_end = source.acceleration_x_max_end
-    e.acceleration_y_min_end = source.acceleration_y_min_end
-    e.acceleration_y_max_end = source.acceleration_y_max_end
-    e.acceleration_z_min_end = source.acceleration_z_min_end
-    e.acceleration_z_max_end = source.acceleration_z_max_end
-
-    -- Drag
-    e.drag_x_min_start = source.drag_x_min_start
-    e.drag_x_max_start = source.drag_x_max_start
-    e.drag_y_min_start = source.drag_y_min_start
-    e.drag_y_max_start = source.drag_y_max_start
-    e.drag_z_min_start = source.drag_z_min_start
-    e.drag_z_max_start = source.drag_z_max_start
-    e.drag_x_min_end = source.drag_x_min_end
-    e.drag_x_max_end = source.drag_x_max_end
-    e.drag_y_min_end = source.drag_y_min_end
-    e.drag_y_max_end = source.drag_y_max_end
-    e.drag_z_min_end = source.drag_z_min_end
-    e.drag_z_max_end = source.drag_z_max_end
-
-    -- Lifetime
-    e.lifetime_min_start = source.lifetime_min_start
-    e.lifetime_max_start = source.lifetime_max_start
-    e.lifetime_min_end = source.lifetime_min_end
-    e.lifetime_max_end = source.lifetime_max_end
-
-    -- Target Offset
-    e.target_offset_x_start = source.target_offset_x_start
-    e.target_offset_y_start = source.target_offset_y_start
-    e.target_offset_z_start = source.target_offset_z_start
-    e.target_offset_x_end = source.target_offset_x_end
-    e.target_offset_y_end = source.target_offset_y_end
-    e.target_offset_z_end = source.target_offset_z_end
-
-    -- Spawn Control
-    e.particle_count_start = source.particle_count_start
-    e.particle_count_end = source.particle_count_end
-    e.spawn_interval_start = source.spawn_interval_start
-    e.spawn_interval_end = source.spawn_interval_end
-
-    -- Homing
-    e.homing_strength_min_start = source.homing_strength_min_start
-    e.homing_strength_max_start = source.homing_strength_max_start
-    e.homing_strength_min_end = source.homing_strength_min_end
-    e.homing_strength_max_end = source.homing_strength_max_end
-
-    -- Child Emitters
-    e.child_emitter_on_death = source.child_emitter_on_death
-    e.child_emitter_mid_life = source.child_emitter_mid_life
-
-    -- Metadata
+    local e = FieldSchema.copy(FieldSchema.EMITTER_SCHEMA, source)
     e.index = new_index
     e.offset = nil  -- Will be calculated on write
-
     return e
 end
 
@@ -2000,6 +1459,284 @@ end
 function M.copy_effect_flags(flags)
     if not flags then return nil end
     return { flags_byte = flags.flags_byte }
+end
+
+--------------------------------------------------------------------------------
+-- Script Bytecode Opcodes (46 opcodes, sizes 2/4/6/8 bytes)
+-- Instruction format: [opcode_word:16][params...]
+-- opcode_word bits 0-8 = handler ID (mask 0x1FF), bits 9-15 = flags
+--------------------------------------------------------------------------------
+
+-- Script opcode definitions: id -> {name, size, params}
+-- params is array of {name, type} where type is "offset", "s16", or "ptr"
+M.SCRIPT_OPCODES = {
+    [0]  = {name = "goto_yield",           size = 4, params = {{name = "target", type = "offset"}}},
+    [1]  = {name = "goto",                 size = 4, params = {{name = "target", type = "offset"}}},
+    [2]  = {name = "spawn_child_effect",   size = 4, params = {{name = "child_entry", type = "offset"}}},
+    [3]  = {name = "terminate_child",      size = 2, params = {}},
+    [4]  = {name = "end",                  size = 2, params = {}},
+    [5]  = {name = "set_texture_page",     size = 2, params = {}},
+    [6]  = {name = "load_callback",        size = 4, params = {{name = "callback_ptr", type = "ptr"}}},
+    [7]  = {name = "invoke_callback",      size = 4, params = {{name = "callback_arg", type = "s16"}}},
+    [8]  = {name = "load_position",        size = 8, params = {{name = "x", type = "s16"}, {name = "y", type = "s16"}, {name = "z", type = "s16"}}},
+    [9]  = {name = "store_pos_to_origin",  size = 2, params = {}},
+    [10] = {name = "load_pos_from_origin", size = 2, params = {}},
+    [11] = {name = "set_rotation",         size = 8, params = {{name = "rx", type = "s16"}, {name = "ry", type = "s16"}, {name = "rz", type = "s16"}}},
+    [12] = {name = "apply_camera_rotation",size = 2, params = {}},
+    [13] = {name = "load_camera_rotation", size = 2, params = {}},
+    [14] = {name = "set_sprite_scale",     size = 8, params = {{name = "sx", type = "s16"}, {name = "sy", type = "s16"}, {name = "sz", type = "s16"}}},
+    [15] = {name = "apply_sprite_scale",   size = 2, params = {}},
+    [16] = {name = "set_script_reg",       size = 4, params = {{name = "value", type = "s16"}}},
+    [17] = {name = "branch_reg_eq",        size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [18] = {name = "branch_reg_ge",        size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [19] = {name = "branch_reg_gt",        size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [20] = {name = "branch_reg_le",        size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [21] = {name = "branch_reg_lt",        size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [22] = {name = "branch_count_eq",      size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [23] = {name = "branch_count_gt",      size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [24] = {name = "branch_count_lt",      size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [25] = {name = "branch_child_count_eq",size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [26] = {name = "branch_child_active",  size = 4, params = {{name = "target", type = "offset"}}},
+    [27] = {name = "branch_child_inactive",size = 4, params = {{name = "target", type = "offset"}}},
+    [28] = {name = "branch_reg_ne",        size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [29] = {name = "branch_anim_done",     size = 4, params = {{name = "target", type = "offset"}}},
+    [30] = {name = "branch_anim_done_cplx",size = 4, params = {{name = "target", type = "offset"}}},
+    [31] = {name = "branch_target_type",   size = 4, params = {{name = "target", type = "offset"}}},
+    [32] = {name = "inc_script_reg",       size = 2, params = {}},
+    [33] = {name = "dec_script_reg",       size = 2, params = {}},
+    [34] = {name = "add_script_reg",       size = 4, params = {{name = "value", type = "s16"}}},
+    [35] = {name = "sub_script_reg",       size = 4, params = {{name = "value", type = "s16"}}},
+    [36] = {name = "reset_sprite_scale",   size = 2, params = {}},
+    [37] = {name = "update_all_particles", size = 2, params = {}},
+    [38] = {name = "spawn_emitter",        size = 2, params = {}},
+    [39] = {name = "init_physics_params",  size = 2, params = {}},
+    [40] = {name = "animate_tick",         size = 2, params = {}},
+    [41] = {name = "process_timeline",     size = 4, params = {{name = "phase", type = "s16"}}},
+    [42] = {name = "clear_timeline_a",     size = 2, params = {}},
+    [43] = {name = "clear_timeline_b",     size = 2, params = {}},
+    [44] = {name = "nop_44",               size = 2, params = {}},
+    [45] = {name = "nop_45",               size = 2, params = {}},
+}
+
+-- Get script opcode info by ID
+function M.get_script_opcode_info(opcode_id)
+    return M.SCRIPT_OPCODES[opcode_id] or {name = string.format("unknown_%02X", opcode_id), size = 2, params = {}}
+end
+
+-- Parse script instructions from file data buffer
+-- Returns array of instruction objects
+function M.parse_script_from_data(data, script_ptr, section_size)
+    local instructions = {}
+    local offset = 0
+
+    while offset < section_size do
+        -- Read opcode word (2 bytes) - always safe if offset < section_size
+        local opcode_word = mem.buf_read16(data, script_ptr + offset)
+        local opcode_id = opcode_word % 512  -- bits 0-8 (0x1FF mask)
+        local flags = math.floor(opcode_word / 512)  -- bits 9-15
+
+        local info = M.get_script_opcode_info(opcode_id)
+
+        -- CRITICAL: Check if full instruction fits within section bounds
+        -- If not, the opcode word we read is actually from the next section
+        if offset + info.size > section_size then
+            break
+        end
+
+        local inst = {
+            offset = offset,
+            opcode_id = opcode_id,
+            opcode_word = opcode_word,
+            flags = flags,
+            name = info.name,
+            size = info.size,
+            params = {}
+        }
+
+        -- Parse parameters based on size and param definitions
+        local param_offset = 2  -- Start after opcode word
+        for i, param_def in ipairs(info.params) do
+            local val = mem.buf_read16s(data, script_ptr + offset + param_offset)
+            inst.params[param_def.name] = val
+            param_offset = param_offset + 2
+        end
+
+        table.insert(instructions, inst)
+        offset = offset + info.size
+
+        -- Safety: prevent infinite loop on unknown opcodes
+        if info.size == 0 then
+            break
+        end
+    end
+
+    return instructions
+end
+
+-- Parse script instructions from PSX memory
+function M.parse_script_from_memory(base_addr, script_ptr, section_size)
+    local instructions = {}
+    local offset = 0
+    local addr = base_addr + script_ptr
+
+    while offset < section_size do
+        -- Read opcode word (2 bytes)
+        local opcode_word = mem.read16(addr + offset)
+        local opcode_id = opcode_word % 512  -- bits 0-8
+        local flags = math.floor(opcode_word / 512)  -- bits 9-15
+
+        local info = M.get_script_opcode_info(opcode_id)
+
+        -- CRITICAL: Check if full instruction fits within section bounds
+        if offset + info.size > section_size then
+            break
+        end
+
+        local inst = {
+            offset = offset,
+            opcode_id = opcode_id,
+            opcode_word = opcode_word,
+            flags = flags,
+            name = info.name,
+            size = info.size,
+            params = {}
+        }
+
+        -- Parse parameters
+        local param_offset = 2
+        for i, param_def in ipairs(info.params) do
+            local val = mem.read16s(addr + offset + param_offset)
+            inst.params[param_def.name] = val
+            param_offset = param_offset + 2
+        end
+
+        table.insert(instructions, inst)
+        offset = offset + info.size
+
+        if info.size == 0 then
+            break
+        end
+    end
+
+    return instructions
+end
+
+-- Calculate total byte size of script instructions
+function M.calculate_script_size(instructions)
+    local size = 0
+    for _, inst in ipairs(instructions) do
+        local info = M.SCRIPT_OPCODES[inst.opcode_id] or {size = 2}
+        size = size + info.size
+    end
+    return size
+end
+
+-- Serialize script instructions to byte string
+function M.serialize_script_instructions(instructions)
+    local bytes = {}
+
+    for _, inst in ipairs(instructions) do
+        local info = M.SCRIPT_OPCODES[inst.opcode_id] or {size = 2, params = {}}
+
+        -- Reconstruct opcode word with flags
+        local opcode_word = inst.opcode_id + (inst.flags * 512)
+
+        -- Write opcode word (little-endian)
+        table.insert(bytes, string.char(opcode_word % 256))
+        table.insert(bytes, string.char(math.floor(opcode_word / 256) % 256))
+
+        -- Write parameter bytes
+        for _, param_def in ipairs(info.params) do
+            local val = inst.params[param_def.name] or 0
+            -- Handle signed values for serialization
+            if val < 0 then
+                val = val + 65536
+            end
+            table.insert(bytes, string.char(val % 256))
+            table.insert(bytes, string.char(math.floor(val / 256) % 256))
+        end
+    end
+
+    return table.concat(bytes)
+end
+
+-- Write script instructions to PSX memory
+function M.write_script_to_memory(base_addr, script_ptr, instructions)
+    local offset = 0
+    local addr = base_addr + script_ptr
+
+    for _, inst in ipairs(instructions) do
+        local info = M.SCRIPT_OPCODES[inst.opcode_id] or {size = 2, params = {}}
+
+        -- Reconstruct and write opcode word
+        local opcode_word = inst.opcode_id + (inst.flags * 512)
+        mem.write16(addr + offset, opcode_word)
+
+        -- Write parameters
+        local param_offset = 2
+        for _, param_def in ipairs(info.params) do
+            local val = inst.params[param_def.name] or 0
+            mem.write16(addr + offset + param_offset, val)
+            param_offset = param_offset + 2
+        end
+
+        offset = offset + info.size
+    end
+end
+
+-- Deep copy script instructions
+function M.copy_script_instructions(instructions)
+    if not instructions then return nil end
+
+    local copy = {}
+    for _, inst in ipairs(instructions) do
+        local new_inst = {
+            offset = inst.offset,
+            opcode_id = inst.opcode_id,
+            opcode_word = inst.opcode_word,
+            flags = inst.flags,
+            name = inst.name,
+            size = inst.size,
+            params = {}
+        }
+        for k, v in pairs(inst.params) do
+            new_inst.params[k] = v
+        end
+        table.insert(copy, new_inst)
+    end
+    return copy
+end
+
+-- Create a new script instruction with default parameters
+function M.create_script_instruction(opcode_id)
+    local info = M.SCRIPT_OPCODES[opcode_id] or {name = "unknown", size = 2, params = {}}
+
+    local inst = {
+        offset = 0,  -- Will be recalculated on write
+        opcode_id = opcode_id,
+        opcode_word = opcode_id,  -- No flags by default
+        flags = 0,
+        name = info.name,
+        size = info.size,
+        params = {}
+    }
+
+    -- Initialize all params to 0
+    for _, param_def in ipairs(info.params) do
+        inst.params[param_def.name] = 0
+    end
+
+    return inst
+end
+
+-- Recalculate offsets for all instructions (after insert/delete)
+function M.recalculate_script_offsets(instructions)
+    local offset = 0
+    for _, inst in ipairs(instructions) do
+        inst.offset = offset
+        local info = M.SCRIPT_OPCODES[inst.opcode_id] or {size = 2}
+        offset = offset + info.size
+    end
 end
 
 --------------------------------------------------------------------------------

@@ -17,8 +17,9 @@ local Parser = nil
 local ee_reload_fn = nil
 local load_from_memory_internal_fn = nil
 local apply_all_edits_fn = nil
+local texture_ops = nil
 
-function M.set_dependencies(cfg, log_module, mem_utils, parser, reload_fn, load_mem_internal_fn, apply_all_edits)
+function M.set_dependencies(cfg, log_module, mem_utils, parser, reload_fn, load_mem_internal_fn, apply_all_edits, tex_ops)
     config = cfg
     logging = log_module
     MemUtils = mem_utils
@@ -26,6 +27,7 @@ function M.set_dependencies(cfg, log_module, mem_utils, parser, reload_fn, load_
     ee_reload_fn = reload_fn
     load_from_memory_internal_fn = load_mem_internal_fn
     apply_all_edits_fn = apply_all_edits
+    texture_ops = tex_ops
 end
 
 --------------------------------------------------------------------------------
@@ -235,6 +237,19 @@ function M.ee_load_session(name)
                                 end
                             end
 
+                            -- Parse script bytecode from .bin data
+                            if Parser.parse_script_from_data then
+                                local script_size = EFFECT_EDITOR.header.effect_data_ptr - EFFECT_EDITOR.header.script_data_ptr
+                                EFFECT_EDITOR.script_instructions = Parser.parse_script_from_data(
+                                    bin_data,
+                                    EFFECT_EDITOR.header.script_data_ptr,
+                                    script_size
+                                )
+                                EFFECT_EDITOR.original_script_instructions = Parser.copy_script_instructions(EFFECT_EDITOR.script_instructions)
+                                logging.log(string.format("  Parsed %d script instructions (%d bytes) from .bin",
+                                    #EFFECT_EDITOR.script_instructions, script_size))
+                            end
+
                             EFFECT_EDITOR.file_name = name .. ".bin"
                             logging.log(string.format("  Parsed %d emitters from .bin", EFFECT_EDITOR.emitter_count))
 
@@ -244,6 +259,14 @@ function M.ee_load_session(name)
                                 apply_all_edits_fn(true)  -- silent mode
                             end
                             logging.log("  All edits applied to memory")
+
+                            -- Apply texture edits from BMP if it exists
+                            if texture_ops then
+                                local tex_reloaded = texture_ops.maybe_reload_texture_before_test()
+                                if tex_reloaded then
+                                    logging.log("  Texture edits applied from BMP")
+                                end
+                            end
                         else
                             logging.log_error("  .bin file is empty, falling back to memory")
                             if load_from_memory_internal_fn then

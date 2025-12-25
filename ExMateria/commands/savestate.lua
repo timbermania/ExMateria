@@ -15,14 +15,16 @@ local MemUtils = nil
 local zlib_io = nil
 local apply_all_edits_fn = nil
 local ee_refresh_sessions_fn = nil
+local texture_ops = nil
 
-function M.set_dependencies(cfg, log_module, mem_utils, zlib, apply_all_edits, refresh_fn)
+function M.set_dependencies(cfg, log_module, mem_utils, zlib, apply_all_edits, refresh_fn, tex_ops)
     config = cfg
     logging = log_module
     MemUtils = mem_utils
     zlib_io = zlib
     apply_all_edits_fn = apply_all_edits
     ee_refresh_sessions_fn = refresh_fn
+    texture_ops = tex_ops
 end
 
 --------------------------------------------------------------------------------
@@ -355,6 +357,14 @@ function M.ee_save_bin_edited()
             apply_all_edits_fn(true)  -- silent mode
         end
         logging.log("  All edits applied")
+
+        -- Step 2b: Also apply texture edits if a modified BMP exists
+        if texture_ops then
+            local tex_reloaded = texture_ops.maybe_reload_texture_before_test()
+            if tex_reloaded then
+                logging.log("  Texture edits applied from BMP")
+            end
+        end
 
         logging.log("Step 3: Saving bin from memory...")
         local bin_path = config.EFFECT_BINS_PATH .. name .. ".bin"

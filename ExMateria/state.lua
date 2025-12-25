@@ -59,6 +59,10 @@ EFFECT_EDITOR = {
     sound_definition = nil,             -- Parsed feds structure
     original_sound_definition = nil,    -- Copy for reset
 
+    -- Script bytecode
+    script_instructions = nil,          -- Array of parsed script instructions
+    original_script_instructions = nil, -- Copy for reset
+
     -- Memory target
     memory_base = 0,
 
@@ -88,7 +92,13 @@ EFFECT_EDITOR = {
 
     -- Test cycle settings
     test_quiet = true,          -- Suppress console logging during test cycle
-    test_verbose = false        -- Show detailed [DEBUG] messages
+    test_verbose = false,       -- Show detailed [DEBUG] messages
+
+    -- Texture editing state
+    texture_export_fingerprint = nil,  -- Hash of exported BMP (to detect changes)
+    texture_width = 0,                 -- Current texture width (pixels)
+    texture_height = 0,                -- Current texture height (pixels)
+    texture_original_palette = nil     -- Original BGR555 palette (512 bytes) for STP bit preservation
 }
 
 -- Breakpoint handle (must be global to avoid GC)
@@ -134,6 +144,8 @@ function M.reset()
     EFFECT_EDITOR.original_sound_flags = nil
     EFFECT_EDITOR.sound_definition = nil
     EFFECT_EDITOR.original_sound_definition = nil
+    EFFECT_EDITOR.script_instructions = nil
+    EFFECT_EDITOR.original_script_instructions = nil
     EFFECT_EDITOR.memory_base = 0
     EFFECT_EDITOR.capture_armed = false
     EFFECT_EDITOR.last_captured_effect_id = -1
@@ -149,6 +161,10 @@ function M.reset()
     EFFECT_EDITOR.auto_loop_last_time = 0
     EFFECT_EDITOR.test_quiet = true
     EFFECT_EDITOR.test_verbose = false
+    EFFECT_EDITOR.texture_export_fingerprint = nil
+    EFFECT_EDITOR.texture_width = 0
+    EFFECT_EDITOR.texture_height = 0
+    EFFECT_EDITOR.texture_original_palette = nil
 end
 
 return M

@@ -10,11 +10,15 @@ local M = {}
 local logging = nil
 local arm_capture_fn = nil
 local disarm_capture_fn = nil
+local MemUtils = nil
+local config = nil
 
-function M.set_dependencies(log_module, arm_fn, disarm_fn)
+function M.set_dependencies(log_module, arm_fn, disarm_fn, mem_utils, cfg)
     logging = log_module
     arm_capture_fn = arm_fn
     disarm_capture_fn = disarm_fn
+    MemUtils = mem_utils
+    config = cfg
 end
 
 --------------------------------------------------------------------------------
@@ -62,6 +66,7 @@ function M.ee_help()
     print("")
     print("DEBUG:")
     print("  ee_status(), ee_verbose(), ee_error(), ee_dump(), ee_help()")
+    print("  ee_regression_dump('name') - Dump memory for regression testing")
     print("")
     print("=== WORKFLOW ===")
     print("  NEW SESSION:")
@@ -186,6 +191,57 @@ end
 function M.ee_disarm()
     if disarm_capture_fn then
         disarm_capture_fn()
+    end
+end
+
+--------------------------------------------------------------------------------
+-- ee_regression_dump: Dump memory region for regression testing
+--------------------------------------------------------------------------------
+
+function M.ee_regression_dump(filename)
+    if not filename or filename == "" then
+        print("Usage: ee_regression_dump('name')")
+        print("  Dumps effect memory region to DATA_PATH/name_dump.bin")
+        return
+    end
+
+    -- Check prerequisites
+    local base = EFFECT_EDITOR.memory_base
+    if not base or base < 0x80000000 then
+        print("ERROR: No effect loaded (memory_base not set)")
+        print("  Load a session first: ee_load_session('name')")
+        return
+    end
+
+    if not EFFECT_EDITOR.header then
+        print("ERROR: No effect header loaded")
+        return
+    end
+
+    -- Calculate dump size: from base to START of texture section
+    -- (Texture section may have volatile PSX runtime data that varies between loads)
+    local texture_ptr = EFFECT_EDITOR.header.texture_ptr or 0
+    local dump_size = texture_ptr  -- Stop at texture, don't include it
+
+    if dump_size < 0x100 or dump_size > 0x20000 then
+        print(string.format("ERROR: Invalid dump size: %d bytes", dump_size))
+        return
+    end
+
+    -- Refresh memory pointer and read
+    MemUtils.refresh_mem()
+    local bytes = MemUtils.read_bytes(base, dump_size)
+    local data = MemUtils.bytes_to_string(bytes)
+
+    -- Save to file
+    local path = config.DATA_PATH:gsub("/", "\\") .. filename .. "_dump.bin"
+    local ok, err = MemUtils.save_file(path, data)
+
+    if ok then
+        print(string.format("Regression dump: %d bytes from 0x%08X", dump_size, base))
+        print(string.format("  Saved to: %s", path))
+    else
+        print("ERROR: Failed to save dump: " .. tostring(err))
     end
 end
 

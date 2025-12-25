@@ -59,10 +59,10 @@ package.path = SCRIPT_DIR .. "?.lua;"
 --------------------------------------------------------------------------------
 
 local modules_to_clear = {
-    "platform",
-    "config", "logging", "state", "memory_utils", "parser", "zlib_io",
-    "capture", "memory_ops",
-    "helpers", "structure_tab", "particles_tab", "header_tab", "timeline_tab", "camera_tab", "color_tracks_tab", "time_scale_tab", "settings_tab", "sound_tab",
+    "platform", "bmp",
+    "config", "logging", "state", "memory_utils", "parser", "zlib_io", "structure_manager", "field_schema",
+    "capture", "memory_ops", "texture_ops",
+    "helpers", "structure_tab", "particles_tab", "header_tab", "timeline_tab", "camera_tab", "color_tracks_tab", "time_scale_tab", "settings_tab", "sound_tab", "script_tab",
     "load_panel", "save_panel", "session_list", "main_window",
     "curve_generators", "curve_canvas", "curves_tab",
     "workflow", "file_ops", "savestate", "session", "debug_cmds"
@@ -92,6 +92,8 @@ local state = require("state")  -- Sets up EFFECT_EDITOR global
 local MemUtils = require("memory_utils")
 local Parser = require("parser")
 local zlib_io = require("zlib_io")
+local structure_manager = require("structure_manager")
+local field_schema = require("field_schema")
 
 -- System modules
 local capture = require("capture")
@@ -108,6 +110,7 @@ local color_tracks_tab = require("color_tracks_tab")
 local time_scale_tab = require("time_scale_tab")
 local settings_tab = require("settings_tab")
 local sound_tab = require("sound_tab")
+local script_tab = require("script_tab")
 local load_panel = require("load_panel")
 local save_panel = require("save_panel")
 local session_list = require("session_list")
@@ -122,6 +125,7 @@ local file_ops = require("file_ops")
 local savestate = require("savestate")
 local session = require("session")
 local debug_cmds = require("debug_cmds")
+local texture_ops = require("texture_ops")
 
 --------------------------------------------------------------------------------
 -- Wire Up Dependencies
@@ -130,11 +134,14 @@ local debug_cmds = require("debug_cmds")
 -- Set up logging in zlib_io
 zlib_io.set_logger(logging.log, logging.log_error)
 
+-- Set up structure manager
+structure_manager.set_dependencies(MemUtils, Parser, logging.log, logging.log_verbose)
+
 -- Set up capture module
 capture.set_dependencies(MemUtils, logging.log, logging.log_error)
 
 -- Set up memory_ops module
-memory_ops.set_dependencies(MemUtils, Parser, config, logging.log, logging.log_verbose, logging.log_error)
+memory_ops.set_dependencies(MemUtils, Parser, config, logging.log, logging.log_verbose, logging.log_error, structure_manager)
 
 -- Wire capture callback to memory_ops (avoids circular dependency)
 capture.on_capture_callback = memory_ops.load_from_memory_internal
@@ -147,23 +154,25 @@ camera_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, helpers)
 color_tracks_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, helpers)
 time_scale_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, memory_ops.add_timing_curve_section, memory_ops.remove_timing_curve_section)
 sound_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory, Parser)
+script_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory, Parser)
 load_panel.set_dependencies(memory_ops.load_effect_file, capture.arm_capture, capture.disarm_capture)
 session_list.set_dependencies(session.ee_load_session, session.ee_delete, session.ee_refresh_sessions)
 save_panel.set_dependencies(config, savestate.ee_raw_save, savestate.ee_save_bin_edited,
                             savestate.ee_save_state_only, session.ee_refresh_sessions, session_list,
                             session.ee_copy)
 curves_tab.set_dependencies(curve_canvas, curve_generators, MemUtils, Parser, memory_ops)
-main_window.set_dependencies(load_panel, save_panel, structure_tab, particles_tab, curves_tab, header_tab, timeline_tab, camera_tab, color_tracks_tab, time_scale_tab, sound_tab, settings_tab, workflow.ee_test, savestate.ee_save_bin_edited, session.ee_load_session)
+main_window.set_dependencies(load_panel, save_panel, structure_tab, particles_tab, curves_tab, header_tab, timeline_tab, camera_tab, color_tracks_tab, time_scale_tab, sound_tab, script_tab, settings_tab, workflow.ee_test, savestate.ee_save_bin_edited, session.ee_load_session, texture_ops)
 
 -- Set up command modules (all use unified apply_all_edits_to_memory)
-workflow.set_dependencies(config, logging, MemUtils, memory_ops.apply_all_edits_to_memory, savestate.ee_reload)
+workflow.set_dependencies(config, logging, MemUtils, memory_ops.apply_all_edits_to_memory, savestate.ee_reload, texture_ops)
 file_ops.set_dependencies(config, logging, MemUtils, memory_ops.load_effect_file,
                           memory_ops.load_from_memory, memory_ops.load_from_memory_internal)
 savestate.set_dependencies(config, logging, MemUtils, zlib_io,
-                           memory_ops.apply_all_edits_to_memory, session.ee_refresh_sessions)
+                           memory_ops.apply_all_edits_to_memory, session.ee_refresh_sessions, texture_ops)
 session.set_dependencies(config, logging, MemUtils, Parser, savestate.ee_reload,
-                         memory_ops.load_from_memory_internal, memory_ops.apply_all_edits_to_memory)
-debug_cmds.set_dependencies(logging, capture.arm_capture, capture.disarm_capture)
+                         memory_ops.load_from_memory_internal, memory_ops.apply_all_edits_to_memory, texture_ops)
+debug_cmds.set_dependencies(logging, capture.arm_capture, capture.disarm_capture, MemUtils, config)
+texture_ops.set_dependencies(config, logging, MemUtils)
 
 --------------------------------------------------------------------------------
 -- Register Global DrawImguiFrame
@@ -216,6 +225,12 @@ ee_verbose = debug_cmds.ee_verbose
 ee_status = debug_cmds.ee_status
 ee_arm = debug_cmds.ee_arm
 ee_disarm = debug_cmds.ee_disarm
+ee_regression_dump = debug_cmds.ee_regression_dump
+
+-- Texture commands
+ee_texture_dump = texture_ops.debug_dump_texture
+ee_texture_export = texture_ops.export_texture_to_bmp
+ee_texture_reload = texture_ops.reload_texture_from_bmp
 
 --------------------------------------------------------------------------------
 -- Initialization

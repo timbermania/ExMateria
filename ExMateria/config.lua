@@ -21,6 +21,7 @@ M.DATA_PATH = platform.get_appdata_dir() .. "/pcsx-effect-editor/"
 M.SAVESTATE_PATH = nil
 M.EFFECT_BINS_PATH = nil
 M.META_PATH = nil
+M.TEXTURES_PATH = nil
 
 --------------------------------------------------------------------------------
 -- Constants (SCUS94221 / NTSC-U version)
@@ -48,6 +49,7 @@ local function update_derived_paths()
     M.SAVESTATE_PATH = M.DATA_PATH .. "savestates/"
     M.EFFECT_BINS_PATH = M.DATA_PATH .. "bins/"
     M.META_PATH = M.DATA_PATH .. "meta/"
+    M.TEXTURES_PATH = M.DATA_PATH .. "textures/"
 end
 
 --------------------------------------------------------------------------------
@@ -89,6 +91,7 @@ function M.init(script_dir)
     M.ensure_dir(M.SAVESTATE_PATH)
     M.ensure_dir(M.EFFECT_BINS_PATH)
     M.ensure_dir(M.META_PATH)
+    M.ensure_dir(M.TEXTURES_PATH)
 
     initialized = true
 end
@@ -107,6 +110,7 @@ function M.set_data_path(new_path)
     M.ensure_dir(M.SAVESTATE_PATH)
     M.ensure_dir(M.EFFECT_BINS_PATH)
     M.ensure_dir(M.META_PATH)
+    M.ensure_dir(M.TEXTURES_PATH)
 end
 
 return M

@@ -18,12 +18,14 @@ local camera_tab = nil
 local color_tracks_tab = nil
 local time_scale_tab = nil
 local sound_tab = nil
+local script_tab = nil
 local settings_tab = nil
 local test_cycle_fn = nil
 local save_bin_fn = nil
 local reload_fn = nil
+local texture_ops = nil
 
-function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, header_t, timeline_t, camera_t, color_t, time_scale_t, sound_t, settings_t, test_fn, save_bin, reload)
+function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, header_t, timeline_t, camera_t, color_t, time_scale_t, sound_t, script_t, settings_t, test_fn, save_bin, reload, tex_ops)
     load_panel = load_p
     save_panel = save_p
     structure_tab = struct_tab
@@ -35,10 +37,12 @@ function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, h
     color_tracks_tab = color_t
     time_scale_tab = time_scale_t
     sound_tab = sound_t
+    script_tab = script_t
     settings_tab = settings_t
     test_cycle_fn = test_fn
     save_bin_fn = save_bin
     reload_fn = reload
+    texture_ops = tex_ops
 end
 
 --------------------------------------------------------------------------------
@@ -117,11 +121,22 @@ local function draw_top_control_bar()
     end
     imgui.TextUnformatted(effect_info)
 
-    -- Right side: Save Bin and Reload buttons
+    -- Right side: Export Texture, Save Bin, and Reload buttons
     imgui.SameLine()
-    imgui.SetCursorPosX(window_width - 190)  -- Right-align
+    imgui.SetCursorPosX(window_width - 290)  -- Right-align (expanded for new button)
 
     if has_session_name then
+        -- Export Texture button (only for 8bpp textures)
+        if texture_ops and texture_ops.can_export_texture() then
+            if imgui.Button("Export Tex", 85, 28) then
+                texture_ops.export_texture_to_bmp()
+            end
+        else
+            imgui.BeginDisabled()
+            imgui.Button("Export Tex", 85, 28)
+            imgui.EndDisabled()
+        end
+        imgui.SameLine()
         if imgui.Button("Save Bin", 85, 28) then
             if save_bin_fn then save_bin_fn() end
         end
@@ -230,10 +245,9 @@ local function draw_editor_tabs()
             imgui.EndTabItem()
         end
 
-        -- Script tab (placeholder)
+        -- Script Bytecode tab
         if imgui.BeginTabItem("Script") then
-            imgui.TextUnformatted("Script Bytecode Editor")
-            imgui.TextUnformatted("(Coming in Phase 7)")
+            if script_tab then script_tab.draw() end
             imgui.EndTabItem()
         end
 

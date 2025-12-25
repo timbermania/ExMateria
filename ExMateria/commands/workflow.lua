@@ -12,13 +12,15 @@ local logging = nil
 local MemUtils = nil
 local apply_all_edits_fn = nil
 local ee_reload_fn = nil
+local texture_ops = nil
 
-function M.set_dependencies(cfg, log_module, mem_utils, apply_all_edits, reload_fn)
+function M.set_dependencies(cfg, log_module, mem_utils, apply_all_edits, reload_fn, tex_ops)
     config = cfg
     logging = log_module
     MemUtils = mem_utils
     apply_all_edits_fn = apply_all_edits
     ee_reload_fn = reload_fn
+    texture_ops = tex_ops
 end
 
 --------------------------------------------------------------------------------
@@ -89,9 +91,23 @@ function M.ee_test()
             logging.log(string.format("  Post-reload lookup_table[%d]: 0x%08X", EFFECT_EDITOR.effect_id, lookup_base or 0))
         end
 
+        -- Apply structure changes FIRST (this may shift memory addresses)
         if apply_all_edits_fn then
             apply_all_edits_fn(true)  -- silent mode - we'll resume ourselves
         end
+
+        -- Check for modified texture BMP and reload if needed
+        -- IMPORTANT: Must happen AFTER structure changes, otherwise memory shift overwrites texture!
+        if not quiet then logging.log("  Checking for texture changes...") end
+        if texture_ops then
+            local reloaded = texture_ops.maybe_reload_texture_before_test()
+            if reloaded and not quiet then
+                logging.log("  Reloaded modified texture from BMP")
+            end
+        else
+            if not quiet then logging.log("  texture_ops module not available") end
+        end
+
         if not quiet then logging.log("Step 2 complete: all edits applied") end
 
         -- Step 3: Resume emulator
