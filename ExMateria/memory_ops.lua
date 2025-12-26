@@ -283,16 +283,28 @@ local function apply_structure_changes(base, silent)
     local applied = {}
     local header = EFFECT_EDITOR.header
 
+    if not silent then
+        print(string.format("[STRUCT_CHANGE] === apply_structure_changes(0x%08X) ===", base))
+        print(string.format("[STRUCT_CHANGE] BEFORE: header.script=0x%X, effect_data=0x%X, anim_table=0x%X",
+            header.script_data_ptr, header.effect_data_ptr, header.anim_table_ptr))
+    end
+
     -- Handle script structure changes FIRST (script comes before effect_data)
-    local script_delta = StructureManager.calculate_script_delta(base)
+    -- Works like emitters: compare memory vs Lua directly, no original tracking needed
+    local script_delta = StructureManager.calculate_script_delta(base, silent)
     if script_delta ~= 0 then
         if not silent then log(string.format("  Script structure change: %+d bytes", script_delta)) end
+        if not silent then print(string.format("[STRUCT_CHANGE] Applying script delta: %d bytes", script_delta)) end
         StructureManager.apply_structure_changes(base, {script = script_delta}, header, silent)
         table.insert(applied, "script structure")
         -- Recalculate sections after script shift
         EFFECT_EDITOR.sections = Parser.calculate_sections(header)
-        -- Update original to match current (prevents double-shifting on next apply)
-        EFFECT_EDITOR.original_script_instructions = Parser.copy_script_instructions(EFFECT_EDITOR.script_instructions)
+        if not silent then
+            print(string.format("[STRUCT_CHANGE] AFTER: header.script=0x%X, effect_data=0x%X, anim_table=0x%X",
+                header.script_data_ptr, header.effect_data_ptr, header.anim_table_ptr))
+        end
+    else
+        if not silent then print("[STRUCT_CHANGE] No script structure change needed (delta=0)") end
     end
 
     -- Handle emitter structure changes
@@ -461,6 +473,14 @@ local function write_script(base, header, silent)
         return {}
     end
 
+    local script_size = Parser.calculate_script_size(EFFECT_EDITOR.script_instructions)
+    if not silent then
+        print(string.format("[WRITE_SCRIPT] Writing %d instructions (%d bytes) to base=0x%08X + script_ptr=0x%X = 0x%08X",
+            #EFFECT_EDITOR.script_instructions, script_size, base, header.script_data_ptr, base + header.script_data_ptr))
+        print(string.format("[WRITE_SCRIPT] Header: script=0x%X, effect_data=0x%X, anim_table=0x%X",
+            header.script_data_ptr, header.effect_data_ptr, header.anim_table_ptr))
+    end
+
     Parser.write_script_to_memory(base, header.script_data_ptr, EFFECT_EDITOR.script_instructions)
     if not silent then
         log(string.format("  Wrote %d script instructions", #EFFECT_EDITOR.script_instructions))
@@ -482,6 +502,30 @@ function M.apply_all_edits_to_memory(silent)
     MemUtils.refresh_mem()
 
     local base = EFFECT_EDITOR.memory_base
+
+    -- CRITICAL: Refresh header pointers from memory before applying changes
+    -- After savestate reload, memory has original layout but EFFECT_EDITOR.header
+    -- may have stale shifted values from a previous test cycle
+    local mem_header = Parser.parse_header_from_memory(base)
+    if mem_header then
+        -- Update section pointers from memory (these may have been shifted in a previous cycle)
+        EFFECT_EDITOR.header.script_data_ptr = mem_header.script_data_ptr
+        EFFECT_EDITOR.header.effect_data_ptr = mem_header.effect_data_ptr
+        EFFECT_EDITOR.header.anim_table_ptr = mem_header.anim_table_ptr
+        -- NOTE: timing_curve_ptr is intentionally NOT refreshed from memory
+        -- The Lua header value represents user intent (wanting timing curves)
+        -- Memory value after savestate reload is 0 (original state without timing curves)
+        -- The timing curve handler will add the section if lua_ptr != 0 && mem_ptr == 0
+        EFFECT_EDITOR.header.effect_flags_ptr = mem_header.effect_flags_ptr
+        EFFECT_EDITOR.header.timeline_section_ptr = mem_header.timeline_section_ptr
+        EFFECT_EDITOR.header.sound_def_ptr = mem_header.sound_def_ptr
+        EFFECT_EDITOR.header.texture_ptr = mem_header.texture_ptr
+        if not silent then
+            print(string.format("[APPLY_EDITS] Refreshed header from memory: effect_data=0x%X, anim_table=0x%X (timing_curve_ptr preserved: 0x%X)",
+                EFFECT_EDITOR.header.effect_data_ptr, EFFECT_EDITOR.header.anim_table_ptr, EFFECT_EDITOR.header.timing_curve_ptr))
+        end
+    end
+
     local header = EFFECT_EDITOR.header
     local applied = {}
 

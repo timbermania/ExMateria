@@ -129,6 +129,18 @@ function M.apply_structure_changes(base, changes, header, silent)
     local mem_layout = M.read_memory_layout(base)
 
     if not silent then
+        print("[APPLY_STRUCT] === apply_structure_changes ===")
+        print(string.format("[APPLY_STRUCT] base=0x%08X", base))
+        print("[APPLY_STRUCT] Memory layout before shift:")
+        for _, section in ipairs(M.SECTION_SCHEMA) do
+            if mem_layout[section.name] and mem_layout[section.name] ~= 0 then
+                print(string.format("[APPLY_STRUCT]   %s: 0x%X", section.name, mem_layout[section.name]))
+            end
+        end
+        print("[APPLY_STRUCT] Changes requested:")
+        for name, delta in pairs(changes) do
+            print(string.format("[APPLY_STRUCT]   %s: %+d bytes", name, delta))
+        end
         log("Applying structure changes:")
         for name, delta in pairs(changes) do
             log(string.format("  %s: %+d bytes", name, delta))
@@ -218,6 +230,18 @@ function M.apply_structure_changes(base, changes, header, silent)
     MemUtils.refresh_mem()
 
     if not silent then
+        print("[APPLY_STRUCT] Memory layout AFTER shift (from mem_layout table):")
+        for _, section in ipairs(M.SECTION_SCHEMA) do
+            if mem_layout[section.name] and mem_layout[section.name] ~= 0 then
+                print(string.format("[APPLY_STRUCT]   %s: 0x%X", section.name, mem_layout[section.name]))
+            end
+        end
+
+        print("[APPLY_STRUCT] Header AFTER update:")
+        print(string.format("[APPLY_STRUCT]   script_data_ptr: 0x%X", header.script_data_ptr or 0))
+        print(string.format("[APPLY_STRUCT]   effect_data_ptr: 0x%X", header.effect_data_ptr or 0))
+        print(string.format("[APPLY_STRUCT]   anim_table_ptr: 0x%X", header.anim_table_ptr or 0))
+
         log("Structure changes applied. New layout:")
         for _, section in ipairs(M.SECTION_SCHEMA) do
             if mem_layout[section.name] ~= 0 then
@@ -275,26 +299,69 @@ end
 
 -- Calculate script section structure change
 -- Returns: delta in bytes (positive = grew, negative = shrank, 0 = no change)
-function M.calculate_script_delta(base)
+-- Works like calculate_emitter_delta: directly compare memory vs Lua state
+function M.calculate_script_delta(base, silent)
+    if not silent then
+        print(string.format("[SCRIPT_DELTA] === calculate_script_delta(0x%08X) ===", base))
+    end
+
     if not EFFECT_EDITOR.script_instructions then
-        return 0
-    end
-    if not EFFECT_EDITOR.original_script_instructions then
-        return 0
-    end
-
-    -- Compare current Lua state against ORIGINAL Lua state (not memory)
-    -- This avoids phantom deltas from section padding that gets lost during parsing
-    local current_size = Parser.calculate_script_size(EFFECT_EDITOR.script_instructions)
-    local original_size = Parser.calculate_script_size(EFFECT_EDITOR.original_script_instructions)
-
-    if current_size == original_size then
+        if not silent then print("[SCRIPT_DELTA] No script_instructions in Lua state") end
         return 0
     end
 
-    local delta = current_size - original_size
-    log_verbose(string.format("  Script change: %d -> %d (delta=%d bytes)",
-        original_size, current_size, delta))
+    -- Calculate Lua script size (what we want)
+    local lua_size = Parser.calculate_script_size(EFFECT_EDITOR.script_instructions)
+    local lua_count = #EFFECT_EDITOR.script_instructions
+    if not silent then
+        print(string.format("[SCRIPT_DELTA] Lua: %d instructions, %d bytes", lua_count, lua_size))
+        -- Show first few Lua instructions
+        for i = 1, math.min(3, lua_count) do
+            local inst = EFFECT_EDITOR.script_instructions[i]
+            print(string.format("[SCRIPT_DELTA]   Lua[%d]: opcode=%d (%s) size=%d",
+                i, inst.opcode_id, inst.name or "?", inst.size))
+        end
+    end
+
+    -- Parse script from memory and calculate its size
+    -- This avoids phantom deltas from section padding (we parse actual instructions, not raw section)
+    local mem_script_ptr = MemUtils.read32(base + 0x08)
+    local mem_effect_data_ptr = MemUtils.read32(base + 0x0C)
+    local section_size = mem_effect_data_ptr - mem_script_ptr
+    if not silent then
+        print(string.format("[SCRIPT_DELTA] Memory pointers: script=0x%X, effect_data=0x%X, section_size=%d",
+            mem_script_ptr, mem_effect_data_ptr, section_size))
+    end
+
+    local mem_script = Parser.parse_script_from_memory(base, mem_script_ptr, section_size)
+    if not mem_script then
+        if not silent then print("[SCRIPT_DELTA] ERROR: parse_script_from_memory returned nil!") end
+        return 0
+    end
+
+    local mem_size = Parser.calculate_script_size(mem_script)
+    local mem_count = #mem_script
+    if not silent then
+        print(string.format("[SCRIPT_DELTA] Memory: %d instructions, %d bytes", mem_count, mem_size))
+        -- Show first few memory instructions
+        for i = 1, math.min(3, mem_count) do
+            local inst = mem_script[i]
+            print(string.format("[SCRIPT_DELTA]   Mem[%d]: opcode=%d (%s) size=%d",
+                i, inst.opcode_id, inst.name or "?", inst.size))
+        end
+    end
+
+    if lua_size == mem_size then
+        if not silent then
+            print(string.format("[SCRIPT_DELTA] MATCH: lua_size=%d == mem_size=%d, delta=0", lua_size, mem_size))
+        end
+        return 0
+    end
+
+    local delta = lua_size - mem_size
+    if not silent then
+        print(string.format("[SCRIPT_DELTA] MISMATCH: lua_size=%d, mem_size=%d, delta=%d", lua_size, mem_size, delta))
+    end
 
     return delta
 end
