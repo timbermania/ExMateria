@@ -54,10 +54,10 @@ end
 -- Curve Selector Widget
 --------------------------------------------------------------------------------
 
--- Combo items for curve selection (indices 0-14 = curves 1-15, index 15 = none)
--- Labels are 1-based to match the Curves tab display
-local CURVE_ITEMS = "1\0002\0003\0004\0005\0006\0007\0008\0009\00010\00011\00012\00013\00014\00015\0None\0"
-local HOMING_CURVE_ITEMS = "1\0002\0003\0004\0"
+-- Combo items for curve selection (index 0 = none, indices 1-15 = curves 1-15)
+-- Game uses 1-indexed nibbles: nibble 0 = none, nibbles 1-15 = curves 1-15
+local CURVE_ITEMS = "None\0001\0002\0003\0004\0005\0006\0007\0008\0009\00010\00011\00012\00013\00014\00015\0"
+local HOMING_CURVE_ITEMS = "None\0001\0002\0003\0004\0"
 
 -- Reusable curve selector combo
 -- label: display name

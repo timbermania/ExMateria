@@ -546,7 +546,7 @@ end
 -- Build indexed palette from RGBA pixels with alpha support
 -- Returns: palette (table of {r, g, b, a}), indexed_pixels (string of indices)
 -- If more than 256 unique colors, uses simple quantization
-function M.quantize_rgba_to_indexed(width, height, rgba_pixels)
+function M.quantize_rgba_to_indexed(width, height, rgba_pixels, silent)
     -- Build color histogram (including alpha as part of color identity)
     -- Use string key for color+alpha combination
     local color_counts = {}
@@ -575,8 +575,6 @@ function M.quantize_rgba_to_indexed(width, height, rgba_pixels)
         end
         color_counts[key].count = color_counts[key].count + 1
     end
-
-    print(string.format("[QUANTIZE] Found %d unique colors (5-bit quantized with alpha)", #unique_colors))
 
     -- Sort by frequency (most common first)
     table.sort(unique_colors, function(a, b)

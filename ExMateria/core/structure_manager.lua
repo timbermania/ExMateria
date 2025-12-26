@@ -125,16 +125,8 @@ function M.apply_structure_changes(base, changes, header, silent)
         return false
     end
 
-    -- DEBUG: Log function entry
-    print(string.format("[STRUCT DEBUG] apply_structure_changes called"))
-    for name, delta in pairs(changes) do
-        print(string.format("[STRUCT DEBUG]   change: %s = %+d", name, delta))
-    end
-
     -- Read current memory layout
     local mem_layout = M.read_memory_layout(base)
-    -- DEBUG: Log initial memory layout for texture
-    print(string.format("[STRUCT DEBUG] Initial mem_layout[texture] = 0x%X", mem_layout["texture"] or 0))
 
     if not silent then
         log("Applying structure changes:")
@@ -176,13 +168,7 @@ function M.apply_structure_changes(base, changes, header, silent)
                     local downstream = M.SECTION_SCHEMA[j]
                     local old_ptr = mem_layout[downstream.name]
                     if old_ptr and old_ptr ~= 0 then
-                        local new_ptr = old_ptr + delta
-                        mem_layout[downstream.name] = new_ptr
-                        -- DEBUG: Log texture pointer update
-                        if downstream.name == "texture" then
-                            print(string.format("[STRUCT DEBUG] Updating mem_layout[texture]: 0x%X + %d = 0x%X",
-                                old_ptr, delta, new_ptr))
-                        end
+                        mem_layout[downstream.name] = old_ptr + delta
                     end
                 end
             end
@@ -197,7 +183,6 @@ function M.apply_structure_changes(base, changes, header, silent)
     -- For optional sections (like timing_curve): only update if memory had a non-zero value
     -- This preserves header values from .bin when memory doesn't have the optional section
     -- The timing curve handler is responsible for adding/removing optional sections
-    print(string.format("[STRUCT DEBUG] After mem_layout update: mem_layout[texture] = 0x%X", mem_layout["texture"] or 0))
     for _, section in ipairs(M.SECTION_SCHEMA) do
         local new_ptr = mem_layout[section.name]
         -- Skip optional sections if their pointer is 0 (not present in memory)
@@ -207,11 +192,6 @@ function M.apply_structure_changes(base, changes, header, silent)
             -- Update Lua header
             local header_field = section.name .. "_ptr"
             if header[header_field] ~= nil then
-                -- DEBUG: Log texture header update
-                if section.name == "texture" then
-                    print(string.format("[STRUCT DEBUG] Setting header.texture_ptr = 0x%X (was 0x%X)",
-                        new_ptr, header[header_field] or 0))
-                end
                 header[header_field] = new_ptr
             elseif section.name == "timeline" then
                 header.timeline_section_ptr = new_ptr
@@ -230,19 +210,12 @@ function M.apply_structure_changes(base, changes, header, silent)
         -- For optional sections, only write if non-zero (section exists in memory)
         local should_write = new_ptr and (not section.optional or new_ptr ~= 0)
         if should_write then
-            -- DEBUG: Log texture memory write
-            if section.name == "texture" then
-                print(string.format("[STRUCT DEBUG] Writing memory texture_ptr: 0x%X to address 0x%08X",
-                    new_ptr, base + section.offset))
-            end
             MemUtils.write32(base + section.offset, new_ptr)
         end
     end
 
     -- Force refresh memory pointer
     MemUtils.refresh_mem()
-    -- DEBUG: Verify memory write
-    print(string.format("[STRUCT DEBUG] After refresh: memory texture_ptr = 0x%X", MemUtils.read32(base + 0x24)))
 
     if not silent then
         log("Structure changes applied. New layout:")

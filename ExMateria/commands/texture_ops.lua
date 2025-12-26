@@ -70,8 +70,6 @@ local function is_source_newer(source_path, indexed_path)
     end
 
     local is_newer = source_mtime > indexed_mtime
-    print(string.format("[TEXTURE DEBUG] source_mtime=%d, indexed_mtime=%d, newer=%s",
-        source_mtime, indexed_mtime, tostring(is_newer)))
     return is_newer
 end
 
@@ -104,15 +102,10 @@ local function run_imagemagick_quantize(input_path, output_path)
         )
     end
 
-    print(string.format("[TEXTURE DEBUG] ImageMagick command: %s", cmd))
-
     local handle = io.popen(cmd .. " 2>&1")
     if handle then
-        local output = handle:read("*a")
+        handle:read("*a")
         handle:close()
-        if output and #output > 0 then
-            print(string.format("[TEXTURE DEBUG] ImageMagick output: %s", output))
-        end
     end
 
     -- Check if output was created
@@ -345,55 +338,33 @@ function M.reload_texture_from_bmp(silent)
     local legacy_bmp_exists = bmp_path and bmp.file_exists(bmp_path)
     local indexed_exists = bmp.file_exists(indexed_path)
 
-    print(string.format("[TEXTURE DEBUG] tga_exists=%s, legacy_bmp_exists=%s, indexed_exists=%s",
-        tostring(tga_exists), tostring(legacy_bmp_exists), tostring(indexed_exists)))
-
     -- Get texture address from memory (after savestate reload, this is valid)
     MemUtils.refresh_mem()
     local base = EFFECT_EDITOR.memory_base
     local texture_ptr = MemUtils.read32(base + 0x24)
     local texture_addr = base + texture_ptr
-    print(string.format("[TEXTURE DEBUG] base=0x%08X, texture_ptr=0x%X, texture_addr=0x%08X", base, texture_ptr, texture_addr))
 
     local width, height, palette, pixels
 
     -- Priority: TGA (new workflow with alpha) > legacy indexed BMP > legacy source BMP
     if tga_exists then
         -- NEW WORKFLOW: Read TGA directly, quantize ourselves with alpha support
-        print(string.format("[TEXTURE DEBUG] Reading TGA directly: %s", tga_path))
-        if not silent then
-            logging.log("Processing TGA with alpha support...")
-        end
-
         local rgba_width, rgba_height, rgba_pixels = bmp.read_rgba_tga(tga_path)
         if not rgba_width then
-            print(string.format("[TEXTURE DEBUG] Failed to read TGA: %s", tostring(rgba_height)))
             if not silent then
                 logging.log_error("Failed to read TGA: " .. (rgba_height or "unknown error"))
             end
             return false
         end
 
-        print(string.format("[TEXTURE DEBUG] Read TGA: %dx%d, %d pixels", rgba_width, rgba_height, #rgba_pixels))
-
         -- Quantize to indexed with alpha support
-        palette, pixels = bmp.quantize_rgba_to_indexed(rgba_width, rgba_height, rgba_pixels)
+        palette, pixels = bmp.quantize_rgba_to_indexed(rgba_width, rgba_height, rgba_pixels, silent)
         width, height = rgba_width, rgba_height
-
-        if not silent then
-            logging.log(string.format("Quantized TGA to indexed (%dx%d)", width, height))
-        end
 
     elseif indexed_exists then
         -- LEGACY: Use existing indexed BMP
-        print(string.format("[TEXTURE DEBUG] Using indexed BMP: %s", indexed_path))
-        if not silent then
-            logging.log("Using indexed texture: " .. indexed_path:match("[^/\\]+$"))
-        end
-
         width, height, palette, pixels = bmp.read_indexed_bmp(indexed_path, nil)
         if not width then
-            print(string.format("[TEXTURE DEBUG] Failed to read indexed BMP: %s", tostring(height)))
             if not silent then
                 logging.log_error("Failed to read indexed BMP: " .. (height or "unknown error"))
             end
@@ -402,11 +373,6 @@ function M.reload_texture_from_bmp(silent)
 
     elseif legacy_bmp_exists then
         -- LEGACY: Source BMP exists, run ImageMagick
-        print(string.format("[TEXTURE DEBUG] Legacy BMP workflow: %s", bmp_path))
-        if not silent then
-            logging.log("Quantizing legacy BMP with ImageMagick...")
-        end
-
         if not run_imagemagick_quantize(bmp_path, indexed_path) then
             if not silent then
                 logging.log_error("ImageMagick conversion failed")
@@ -416,7 +382,6 @@ function M.reload_texture_from_bmp(silent)
 
         width, height, palette, pixels = bmp.read_indexed_bmp(indexed_path, nil)
         if not width then
-            print(string.format("[TEXTURE DEBUG] Failed to read indexed BMP: %s", tostring(height)))
             if not silent then
                 logging.log_error("Failed to read indexed BMP: " .. (height or "unknown error"))
             end
@@ -425,24 +390,11 @@ function M.reload_texture_from_bmp(silent)
 
     else
         -- No texture files exist
-        print("[TEXTURE DEBUG] No texture files found")
         return false
     end
 
-    print(string.format("[TEXTURE DEBUG] Final: %dx%d, palette entries: %d, pixel bytes: %d",
-        width, height, #palette, #pixels))
-
     -- Convert palette to BGR555, deriving STP bits from palette ALPHA
     local palette_data = bmp.palette_rgb_to_bgr555_from_alpha(palette)
-
-    -- Debug: show STP bits derived from palette alpha
-    local stp_count = 0
-    for i = 1, 256 do
-        if palette[i] and palette[i].a and palette[i].a < 255 then
-            stp_count = stp_count + 1
-        end
-    end
-    print(string.format("[TEXTURE DEBUG] Palette entries with STP=1 (alpha<255): %d", stp_count))
 
     -- Patch RAM
     -- Write palette 1 (512 bytes at offset 0x000)
@@ -460,20 +412,6 @@ function M.reload_texture_from_bmp(silent)
     local pixel_addr = texture_addr + 0x404
     for i = 1, #pixels do
         MemUtils.write8(pixel_addr + i - 1, pixels:byte(i))
-    end
-
-    print(string.format("[TEXTURE DEBUG] Wrote %d palette bytes to 0x%08X", #palette_data, texture_addr))
-    print(string.format("[TEXTURE DEBUG] Wrote %d pixel bytes to 0x%08X", #pixels, pixel_addr))
-
-    -- Verify first few bytes
-    local verify = ""
-    for i = 0, 7 do
-        verify = verify .. string.format("%02X ", MemUtils.read8(texture_addr + i))
-    end
-    print(string.format("[TEXTURE DEBUG] First 8 palette bytes in RAM: %s", verify))
-
-    if not silent then
-        logging.log(string.format("Reloaded texture (%dx%d) - STP from alpha", width, height))
     end
 
     return true
@@ -514,8 +452,6 @@ local function apply_texture_from_bin(silent)
     local texture_ptr = MemUtils.read32(base + 0x24)
     local texture_addr = base + texture_ptr
 
-    print(string.format("[TEXTURE DEBUG] Applying texture from .bin: %dx%d to 0x%08X", width, height, texture_addr))
-
     -- Copy palette 1 from .bin to RAM (512 bytes)
     for i = 0, 511 do
         local byte = MemUtils.buf_read8(data, texture_offset + i)
@@ -548,12 +484,10 @@ end
 function M.maybe_reload_texture_before_test()
     local tga_path = get_texture_tga_path()
     local bmp_path = get_texture_bmp_path()
-    print(string.format("[TEXTURE DEBUG] tga_path = %s, bmp_path = %s", tostring(tga_path), tostring(bmp_path)))
 
     if not tga_path and not bmp_path then
         -- No session, try .bin fallback
-        print("[TEXTURE DEBUG] No texture paths, trying .bin fallback")
-        return apply_texture_from_bin(false)
+        return apply_texture_from_bin(true)
     end
 
     -- Check if any texture source files exist (TGA, BMP, or indexed)
@@ -561,20 +495,14 @@ function M.maybe_reload_texture_before_test()
     local tga_exists = tga_path and bmp.file_exists(tga_path)
     local bmp_exists = bmp_path and bmp.file_exists(bmp_path)
     local indexed_exists = bmp.file_exists(indexed_path)
-    print(string.format("[TEXTURE DEBUG] tga exists: %s, bmp exists: %s, indexed exists: %s",
-        tostring(tga_exists), tostring(bmp_exists), tostring(indexed_exists)))
 
     if not tga_exists and not bmp_exists and not indexed_exists then
         -- No texture files, fall back to .bin
-        print("[TEXTURE DEBUG] No texture files, falling back to .bin")
-        return apply_texture_from_bin(false)
+        return apply_texture_from_bin(true)
     end
 
-    -- Texture files exist - reload from TGA/BMP
-    print("[TEXTURE DEBUG] Calling reload_texture_from_bmp...")
-    local success = M.reload_texture_from_bmp(false)  -- NOT silent - show what's happening
-    print(string.format("[TEXTURE DEBUG] reload_texture_from_bmp returned: %s", tostring(success)))
-    return success
+    -- Texture files exist - reload from TGA/BMP (silent during test)
+    return M.reload_texture_from_bmp(true)
 end
 
 -- Debug: Dump first N bytes of texture to verify patching worked

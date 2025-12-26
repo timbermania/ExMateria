@@ -283,22 +283,12 @@ local function apply_structure_changes(base, silent)
     local applied = {}
     local header = EFFECT_EDITOR.header
 
-    -- DEBUG: Log initial state
-    print(string.format("[DEBUG] === apply_structure_changes START ==="))
-    print(string.format("[DEBUG] Lua header.texture_ptr = 0x%X", EFFECT_EDITOR.header.texture_ptr or 0))
-    print(string.format("[DEBUG] Memory texture_ptr = 0x%X", MemUtils.read32(base + 0x24)))
-
     -- Handle script structure changes FIRST (script comes before effect_data)
     local script_delta = StructureManager.calculate_script_delta(base)
     if script_delta ~= 0 then
-        print(string.format("[DEBUG] Script delta = %d", script_delta))
         if not silent then log(string.format("  Script structure change: %+d bytes", script_delta)) end
         StructureManager.apply_structure_changes(base, {script = script_delta}, header, silent)
         table.insert(applied, "script structure")
-        -- DEBUG: Log state after script structure change
-        print(string.format("[DEBUG] After script structure change:"))
-        print(string.format("[DEBUG]   Lua header.texture_ptr = 0x%X", EFFECT_EDITOR.header.texture_ptr or 0))
-        print(string.format("[DEBUG]   Memory texture_ptr = 0x%X", MemUtils.read32(base + 0x24)))
         -- Recalculate sections after script shift
         EFFECT_EDITOR.sections = Parser.calculate_sections(header)
         -- Update original to match current (prevents double-shifting on next apply)
@@ -309,19 +299,11 @@ local function apply_structure_changes(base, silent)
     local structure_changed = handle_structure_change(silent)
     if structure_changed then
         table.insert(applied, "structure")
-        -- DEBUG: Log state after emitter structure change
-        print(string.format("[DEBUG] After emitter structure change:"))
-        print(string.format("[DEBUG]   Lua header.texture_ptr = 0x%X", EFFECT_EDITOR.header.texture_ptr or 0))
-        print(string.format("[DEBUG]   Memory texture_ptr = 0x%X", MemUtils.read32(base + 0x24)))
     end
 
     -- Handle timing curve structure changes (add/remove 600-byte section)
     local mem_timing_curve_ptr = MemUtils.read32(base + 0x14)
     local lua_timing_curve_ptr = EFFECT_EDITOR.header.timing_curve_ptr
-    -- DEBUG: Log timing curve check
-    print(string.format("[DEBUG] Timing curve check:"))
-    print(string.format("[DEBUG]   lua_timing_curve_ptr = 0x%X", lua_timing_curve_ptr or 0))
-    print(string.format("[DEBUG]   mem_timing_curve_ptr = 0x%X", mem_timing_curve_ptr or 0))
 
     if lua_timing_curve_ptr ~= 0 and mem_timing_curve_ptr == 0 then
         if not silent then log("  Timing curve structure change: ADDING 600-byte section") end
@@ -334,11 +316,6 @@ local function apply_structure_changes(base, silent)
             table.insert(applied, "timing structure (remove)")
         end
     end
-
-    -- DEBUG: Log final state
-    print(string.format("[DEBUG] === apply_structure_changes END ==="))
-    print(string.format("[DEBUG] Final Lua header.texture_ptr = 0x%X", EFFECT_EDITOR.header.texture_ptr or 0))
-    print(string.format("[DEBUG] Final Memory texture_ptr = 0x%X", MemUtils.read32(base + 0x24)))
 
     return applied
 end
