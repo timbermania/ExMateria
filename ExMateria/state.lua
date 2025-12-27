@@ -63,6 +63,17 @@ EFFECT_EDITOR = {
     script_instructions = nil,          -- Array of parsed script instructions
     original_script_instructions = nil, -- Copy for reset
 
+    -- Frames/Sprite definitions
+    framesets = nil,                    -- Array of frameset structures (each contains frames array)
+    frames_group_count = 0,             -- Number of frameset groups
+    original_framesets = nil,           -- Copy for reset functionality
+
+    -- Animation sequences
+    sequences = nil,                    -- Array of sequences (each contains instructions array)
+    sequence_count = 0,                 -- Number of sequences
+    original_sequences = nil,           -- Copy for reset functionality
+    animation_section_target_size = 0,  -- Target size for padding (set by calculate_animation_delta)
+
     -- Memory target
     memory_base = 0,
 
@@ -146,6 +157,13 @@ function M.reset()
     EFFECT_EDITOR.original_sound_definition = nil
     EFFECT_EDITOR.script_instructions = nil
     EFFECT_EDITOR.original_script_instructions = nil
+    EFFECT_EDITOR.framesets = nil
+    EFFECT_EDITOR.frames_group_count = 0
+    EFFECT_EDITOR.original_framesets = nil
+    EFFECT_EDITOR.sequences = nil
+    EFFECT_EDITOR.sequence_count = 0
+    EFFECT_EDITOR.original_sequences = nil
+    EFFECT_EDITOR.animation_section_target_size = 0
     EFFECT_EDITOR.memory_base = 0
     EFFECT_EDITOR.capture_armed = false
     EFFECT_EDITOR.last_captured_effect_id = -1

@@ -285,11 +285,61 @@ local function apply_structure_changes(base, silent)
 
     if not silent then
         print(string.format("[STRUCT_CHANGE] === apply_structure_changes(0x%08X) ===", base))
-        print(string.format("[STRUCT_CHANGE] BEFORE: header.script=0x%X, effect_data=0x%X, anim_table=0x%X",
-            header.script_data_ptr, header.effect_data_ptr, header.anim_table_ptr))
+        print(string.format("[STRUCT_CHANGE] BEFORE: header.frames=0x%X, animation=0x%X, script=0x%X, effect_data=0x%X",
+            header.frames_ptr, header.animation_ptr, header.script_data_ptr, header.effect_data_ptr))
     end
 
-    -- Handle script structure changes FIRST (script comes before effect_data)
+    -- Handle frames structure changes FIRST (frames is at offset 0x00, before everything)
+    local frames_delta = StructureManager.calculate_frames_delta(base, silent)
+    if frames_delta ~= 0 then
+        if not silent then log(string.format("  Frames structure change: %+d bytes", frames_delta)) end
+        if not silent then print(string.format("[STRUCT_CHANGE] Applying frames delta: %d bytes", frames_delta)) end
+        StructureManager.apply_structure_changes(base, {frames = frames_delta}, header, silent)
+        table.insert(applied, "frames structure")
+        -- Recalculate sections after frames shift
+        EFFECT_EDITOR.sections = Parser.calculate_sections(header)
+        if not silent then
+            print(string.format("[STRUCT_CHANGE] AFTER frames shift: animation=0x%X, script=0x%X, effect_data=0x%X",
+                header.animation_ptr, header.script_data_ptr, header.effect_data_ptr))
+        end
+    else
+        if not silent then print("[STRUCT_CHANGE] No frames structure change needed (delta=0)") end
+    end
+
+    -- Handle animation (sequences) structure changes (animation is at offset 0x04, after frames)
+    -- DEBUG: Show current memory animation section
+    if not silent then
+        local mem_anim_ptr = MemUtils.read32(base + 0x04)
+        local mem_script_ptr = MemUtils.read32(base + 0x08)
+        local mem_section_size = mem_script_ptr - mem_anim_ptr
+        local lua_section_size = Parser.calculate_animation_section_size(EFFECT_EDITOR.sequences)
+        print(string.format("[STRUCT_CHANGE] Animation section: mem_size=%d, lua_size=%d, delta=%d",
+            mem_section_size, lua_section_size, lua_section_size - mem_section_size))
+        -- Show original bytes from memory
+        local hex_bytes = {}
+        for i = 0, math.min(15, mem_section_size - 1) do
+            hex_bytes[#hex_bytes + 1] = string.format("%02X", MemUtils.read8(base + mem_anim_ptr + i))
+        end
+        print(string.format("[STRUCT_CHANGE] Memory anim bytes: %s%s",
+            table.concat(hex_bytes, " "), mem_section_size > 16 and " ..." or ""))
+    end
+    local anim_delta = StructureManager.calculate_animation_delta(base, silent)
+    if anim_delta ~= 0 then
+        if not silent then log(string.format("  Animation structure change: %+d bytes", anim_delta)) end
+        if not silent then print(string.format("[STRUCT_CHANGE] Applying animation delta: %d bytes", anim_delta)) end
+        StructureManager.apply_structure_changes(base, {animation = anim_delta}, header, silent)
+        table.insert(applied, "animation structure")
+        -- Recalculate sections after animation shift
+        EFFECT_EDITOR.sections = Parser.calculate_sections(header)
+        if not silent then
+            print(string.format("[STRUCT_CHANGE] AFTER animation shift: script=0x%X, effect_data=0x%X, anim_table=0x%X",
+                header.script_data_ptr, header.effect_data_ptr, header.anim_table_ptr))
+        end
+    else
+        if not silent then print("[STRUCT_CHANGE] No animation structure change needed (delta=0)") end
+    end
+
+    -- Handle script structure changes (script comes before effect_data)
     -- Works like emitters: compare memory vs Lua directly, no original tracking needed
     local script_delta = StructureManager.calculate_script_delta(base, silent)
     if script_delta ~= 0 then
@@ -330,6 +380,69 @@ local function apply_structure_changes(base, silent)
     end
 
     return applied
+end
+
+-- Helper: Write frames section to memory
+local function write_frames_section(base, header, silent)
+    if not EFFECT_EDITOR.framesets or #EFFECT_EDITOR.framesets == 0 then return {} end
+
+    Parser.write_frames_section_to_memory(base, header.frames_ptr, EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count)
+    local total_frames = 0
+    for _, fs in ipairs(EFFECT_EDITOR.framesets) do
+        total_frames = total_frames + #fs.frames
+    end
+    if not silent then log(string.format("  Wrote %d framesets (%d frames)", #EFFECT_EDITOR.framesets, total_frames)) end
+    return {string.format("%d framesets", #EFFECT_EDITOR.framesets)}
+end
+
+-- Helper: Write animation (sequences) section to memory
+local function write_animation_section(base, header, silent)
+    if not EFFECT_EDITOR.sequences or #EFFECT_EDITOR.sequences == 0 then return {} end
+
+    local serialized = Parser.serialize_animation_section(EFFECT_EDITOR.sequences)
+    local addr = base + header.animation_ptr
+
+    -- Get target size (set by calculate_animation_delta to handle padding gaps)
+    local target_size = EFFECT_EDITOR.animation_section_target_size or #serialized
+    local padding_needed = target_size - #serialized
+
+    if not silent then
+        print(string.format("[ANIM_WRITE] Writing %d bytes to 0x%08X (animation_ptr=0x%X)",
+            #serialized, addr, header.animation_ptr))
+        if padding_needed > 0 then
+            print(string.format("[ANIM_WRITE] Padding with %d zeros to reach target size %d",
+                padding_needed, target_size))
+        end
+        -- Show first 20 bytes of serialized data
+        local hex_preview = {}
+        for i = 1, math.min(20, #serialized) do
+            hex_preview[i] = string.format("%02X", serialized:byte(i))
+        end
+        print(string.format("[ANIM_WRITE] First bytes: %s%s",
+            table.concat(hex_preview, " "),
+            #serialized > 20 and " ..." or ""))
+    end
+
+    -- Write serialized data byte by byte
+    for i = 1, #serialized do
+        MemUtils.write8(addr + i - 1, serialized:byte(i))
+    end
+
+    -- Pad with zeros if needed (to fill original section size)
+    if padding_needed > 0 then
+        for i = 1, padding_needed do
+            MemUtils.write8(addr + #serialized + i - 1, 0)
+        end
+    end
+
+    local total_instructions = 0
+    for _, seq in ipairs(EFFECT_EDITOR.sequences) do
+        total_instructions = total_instructions + #seq.instructions
+    end
+    if not silent then log(string.format("  Wrote %d sequences (%d instructions)%s",
+        #EFFECT_EDITOR.sequences, total_instructions,
+        padding_needed > 0 and string.format(" + %d bytes padding", padding_needed) or "")) end
+    return {string.format("%d sequences", #EFFECT_EDITOR.sequences)}
 end
 
 -- Helper: Write particle system data (header + emitters)
@@ -509,6 +622,8 @@ function M.apply_all_edits_to_memory(silent)
     local mem_header = Parser.parse_header_from_memory(base)
     if mem_header then
         -- Update section pointers from memory (these may have been shifted in a previous cycle)
+        EFFECT_EDITOR.header.frames_ptr = mem_header.frames_ptr
+        EFFECT_EDITOR.header.animation_ptr = mem_header.animation_ptr
         EFFECT_EDITOR.header.script_data_ptr = mem_header.script_data_ptr
         EFFECT_EDITOR.header.effect_data_ptr = mem_header.effect_data_ptr
         EFFECT_EDITOR.header.anim_table_ptr = mem_header.anim_table_ptr
@@ -521,8 +636,8 @@ function M.apply_all_edits_to_memory(silent)
         EFFECT_EDITOR.header.sound_def_ptr = mem_header.sound_def_ptr
         EFFECT_EDITOR.header.texture_ptr = mem_header.texture_ptr
         if not silent then
-            print(string.format("[APPLY_EDITS] Refreshed header from memory: effect_data=0x%X, anim_table=0x%X (timing_curve_ptr preserved: 0x%X)",
-                EFFECT_EDITOR.header.effect_data_ptr, EFFECT_EDITOR.header.anim_table_ptr, EFFECT_EDITOR.header.timing_curve_ptr))
+            print(string.format("[APPLY_EDITS] Refreshed header from memory: frames=0x%X, animation=0x%X, effect_data=0x%X (timing_curve_ptr preserved: 0x%X)",
+                EFFECT_EDITOR.header.frames_ptr, EFFECT_EDITOR.header.animation_ptr, EFFECT_EDITOR.header.effect_data_ptr, EFFECT_EDITOR.header.timing_curve_ptr))
         end
     end
 
@@ -535,6 +650,14 @@ function M.apply_all_edits_to_memory(silent)
     end
 
     -- Phase 2: Write all data sections
+    -- Frames section (first in file order)
+    for _, item in ipairs(write_frames_section(base, header, silent)) do
+        table.insert(applied, item)
+    end
+    -- Animation (sequences) section (after frames, before script)
+    for _, item in ipairs(write_animation_section(base, header, silent)) do
+        table.insert(applied, item)
+    end
     -- Script bytecode (before particle system in file order)
     for _, item in ipairs(write_script(base, header, silent)) do
         table.insert(applied, item)
@@ -633,6 +756,28 @@ function M.load_effect_file(effect_num)
     log_verbose("Parsing header...")
     EFFECT_EDITOR.header = Parser.parse_header_from_data(data)
     EFFECT_EDITOR.sections = Parser.calculate_sections(EFFECT_EDITOR.header)
+
+    -- Parse frames section
+    log_verbose("Parsing frames section...")
+    local frames_section_size = EFFECT_EDITOR.header.animation_ptr - EFFECT_EDITOR.header.frames_ptr
+    EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count = Parser.parse_frames_section_from_data(data, EFFECT_EDITOR.header.frames_ptr, frames_section_size)
+    EFFECT_EDITOR.original_framesets = Parser.copy_framesets(EFFECT_EDITOR.framesets)
+    local total_frames = 0
+    for _, fs in ipairs(EFFECT_EDITOR.framesets) do
+        total_frames = total_frames + #fs.frames
+    end
+    log_verbose(string.format("  Loaded %d framesets (%d total frames), %d groups", #EFFECT_EDITOR.framesets, total_frames, EFFECT_EDITOR.frames_group_count))
+
+    -- Parse animation (sequences) section
+    log_verbose("Parsing animation sequences...")
+    local anim_section_size = EFFECT_EDITOR.header.script_data_ptr - EFFECT_EDITOR.header.animation_ptr
+    EFFECT_EDITOR.sequences, EFFECT_EDITOR.sequence_count = Parser.parse_animation_section_from_data(data, EFFECT_EDITOR.header.animation_ptr, anim_section_size)
+    EFFECT_EDITOR.original_sequences = Parser.copy_sequences(EFFECT_EDITOR.sequences)
+    local total_instructions = 0
+    for _, seq in ipairs(EFFECT_EDITOR.sequences) do
+        total_instructions = total_instructions + #seq.instructions
+    end
+    log_verbose(string.format("  Loaded %d sequences (%d total instructions)", #EFFECT_EDITOR.sequences, total_instructions))
 
     -- Parse script bytecode
     log_verbose("Parsing script bytecode...")
@@ -761,6 +906,26 @@ function M.load_from_memory_internal(base_addr)
     EFFECT_EDITOR.memory_base = base_addr
     EFFECT_EDITOR.header = Parser.parse_header_from_memory(header_location)
     EFFECT_EDITOR.sections = Parser.calculate_sections(EFFECT_EDITOR.header)
+
+    -- Parse frames section from memory
+    local frames_section_size = EFFECT_EDITOR.header.animation_ptr - EFFECT_EDITOR.header.frames_ptr
+    EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count = Parser.parse_frames_section_from_memory(base_addr, EFFECT_EDITOR.header.frames_ptr, frames_section_size)
+    EFFECT_EDITOR.original_framesets = Parser.copy_framesets(EFFECT_EDITOR.framesets)
+    local total_frames = 0
+    for _, fs in ipairs(EFFECT_EDITOR.framesets) do
+        total_frames = total_frames + #fs.frames
+    end
+    log(string.format("  Loaded %d framesets (%d total frames), %d groups from memory", #EFFECT_EDITOR.framesets, total_frames, EFFECT_EDITOR.frames_group_count))
+
+    -- Parse animation (sequences) section from memory
+    local anim_section_size = EFFECT_EDITOR.header.script_data_ptr - EFFECT_EDITOR.header.animation_ptr
+    EFFECT_EDITOR.sequences, EFFECT_EDITOR.sequence_count = Parser.parse_animation_section_from_memory(base_addr, EFFECT_EDITOR.header.animation_ptr, anim_section_size)
+    EFFECT_EDITOR.original_sequences = Parser.copy_sequences(EFFECT_EDITOR.sequences)
+    local total_instructions = 0
+    for _, seq in ipairs(EFFECT_EDITOR.sequences) do
+        total_instructions = total_instructions + #seq.instructions
+    end
+    log(string.format("  Loaded %d sequences (%d total instructions) from memory", #EFFECT_EDITOR.sequences, total_instructions))
 
     -- Parse script bytecode from memory
     local script_size = EFFECT_EDITOR.header.effect_data_ptr - EFFECT_EDITOR.header.script_data_ptr

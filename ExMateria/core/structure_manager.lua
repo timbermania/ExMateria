@@ -35,8 +35,8 @@ end
 -- When a section grows/shrinks, ALL downstream pointers must be updated
 --
 -- Header layout:
---   0x00: frames_ptr (fixed, not affected by structure changes)
---   0x04: animation_ptr (fixed)
+--   0x00: frames_ptr (sprite/frame definitions)
+--   0x04: animation_ptr (sprite animation sequences)
 --   0x08: script_data_ptr (script section start)
 --   0x0C: effect_data_ptr (emitters section start)
 --   0x10: anim_table_ptr (curves section start)
@@ -49,6 +49,8 @@ end
 M.SECTION_SCHEMA = {
     -- {name, header_offset, is_optional}
     -- Listed in order from start to end of file
+    {name = "frames",        offset = 0x00, optional = false},  -- sprite/frame definitions
+    {name = "animation",     offset = 0x04, optional = false},  -- sprite animation sequences
     {name = "script",        offset = 0x08, optional = false},
     {name = "effect_data",   offset = 0x0C, optional = false},  -- particle header + emitters
     {name = "anim_table",    offset = 0x10, optional = false},  -- animation curves
@@ -361,6 +363,116 @@ function M.calculate_script_delta(base, silent)
     local delta = lua_size - mem_size
     if not silent then
         print(string.format("[SCRIPT_DELTA] MISMATCH: lua_size=%d, mem_size=%d, delta=%d", lua_size, mem_size, delta))
+    end
+
+    return delta
+end
+
+-- Calculate animation section structure change
+-- Returns: delta in bytes (positive = grew, negative = shrank, 0 = no change)
+-- Animation section is at header[0x04], between frames and script
+function M.calculate_animation_delta(base, silent)
+    if not silent then
+        print(string.format("[ANIM_DELTA] === calculate_animation_delta(0x%08X) ===", base))
+    end
+
+    if not EFFECT_EDITOR.sequences then
+        if not silent then print("[ANIM_DELTA] No sequences in Lua state") end
+        return 0
+    end
+
+    -- Get current memory section size
+    local mem_anim_ptr = MemUtils.read32(base + 0x04)
+    local mem_script_ptr = MemUtils.read32(base + 0x08)
+    local mem_section_size = mem_script_ptr - mem_anim_ptr
+
+    if not silent then
+        print(string.format("[ANIM_DELTA] Memory: anim_ptr=0x%X, script_ptr=0x%X, section_size=%d",
+            mem_anim_ptr, mem_script_ptr, mem_section_size))
+    end
+
+    -- Calculate Lua animation section size
+    local lua_size = Parser.calculate_animation_section_size(EFFECT_EDITOR.sequences)
+    if not silent then
+        print(string.format("[ANIM_DELTA] Lua section size: %d bytes (%d sequences)",
+            lua_size, #EFFECT_EDITOR.sequences))
+    end
+
+    -- Store memory section size for padding during write
+    -- This ensures we can pad small gaps instead of shifting memory
+    EFFECT_EDITOR.animation_section_target_size = mem_section_size
+
+    if lua_size == mem_section_size then
+        if not silent then
+            print(string.format("[ANIM_DELTA] MATCH: lua_size=%d == mem_size=%d, delta=0", lua_size, mem_section_size))
+        end
+        return 0
+    end
+
+    local delta = lua_size - mem_section_size
+
+    -- For small negative deltas (lost padding, typically 1-4 bytes), don't shift.
+    -- Instead, we'll pad during write to fill the original section size.
+    -- This prevents off-by-one corruptions from propagating through all downstream sections.
+    if delta >= -4 and delta < 0 then
+        if not silent then
+            print(string.format("[ANIM_DELTA] SMALL PADDING GAP: lua_size=%d, mem_size=%d, delta=%d -> will pad instead of shift",
+                lua_size, mem_section_size, delta))
+        end
+        return 0  -- Don't shift; write_animation_section will pad
+    end
+
+    if not silent then
+        print(string.format("[ANIM_DELTA] MISMATCH: lua_size=%d, mem_size=%d, delta=%d", lua_size, mem_section_size, delta))
+    end
+
+    return delta
+end
+
+-- Calculate frames section structure change
+-- Returns: delta in bytes (positive = grew, negative = shrank, 0 = no change)
+-- Works like calculate_script_delta: directly compare memory vs Lua state
+function M.calculate_frames_delta(base, silent)
+    if not silent then
+        print(string.format("[FRAMES_DELTA] === calculate_frames_delta(0x%08X) ===", base))
+    end
+
+    if not EFFECT_EDITOR.framesets then
+        if not silent then print("[FRAMES_DELTA] No framesets in Lua state") end
+        return 0
+    end
+
+    -- Get current memory section size
+    local mem_frames_ptr = MemUtils.read32(base + 0x00)
+    local mem_animation_ptr = MemUtils.read32(base + 0x04)
+    local mem_section_size = mem_animation_ptr - mem_frames_ptr
+
+    if not silent then
+        print(string.format("[FRAMES_DELTA] Memory: frames_ptr=0x%X, animation_ptr=0x%X, section_size=%d",
+            mem_frames_ptr, mem_animation_ptr, mem_section_size))
+    end
+
+    -- Calculate Lua frames section size (requires Parser.calculate_frames_section_size)
+    if not Parser.calculate_frames_section_size then
+        if not silent then print("[FRAMES_DELTA] Parser.calculate_frames_section_size not available yet") end
+        return 0
+    end
+
+    local lua_size = Parser.calculate_frames_section_size(EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count)
+    if not silent then
+        print(string.format("[FRAMES_DELTA] Lua section size: %d bytes", lua_size))
+    end
+
+    if lua_size == mem_section_size then
+        if not silent then
+            print(string.format("[FRAMES_DELTA] MATCH: lua_size=%d == mem_size=%d, delta=0", lua_size, mem_section_size))
+        end
+        return 0
+    end
+
+    local delta = lua_size - mem_section_size
+    if not silent then
+        print(string.format("[FRAMES_DELTA] MISMATCH: lua_size=%d, mem_size=%d, delta=%d", lua_size, mem_section_size, delta))
     end
 
     return delta

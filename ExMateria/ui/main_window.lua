@@ -19,13 +19,15 @@ local color_tracks_tab = nil
 local time_scale_tab = nil
 local sound_tab = nil
 local script_tab = nil
+local frames_tab = nil
+local sequences_tab = nil
 local settings_tab = nil
 local test_cycle_fn = nil
 local save_bin_fn = nil
 local reload_fn = nil
 local texture_ops = nil
 
-function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, header_t, timeline_t, camera_t, color_t, time_scale_t, sound_t, script_t, settings_t, test_fn, save_bin, reload, tex_ops)
+function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, header_t, timeline_t, camera_t, color_t, time_scale_t, sound_t, script_t, frames_t, sequences_t, settings_t, test_fn, save_bin, reload, tex_ops)
     load_panel = load_p
     save_panel = save_p
     structure_tab = struct_tab
@@ -38,6 +40,8 @@ function M.set_dependencies(load_p, save_p, struct_tab, particles_t, curves_t, h
     time_scale_tab = time_scale_t
     sound_tab = sound_t
     script_tab = script_t
+    frames_tab = frames_t
+    sequences_tab = sequences_t
     settings_tab = settings_t
     test_cycle_fn = test_fn
     save_bin_fn = save_bin
@@ -248,6 +252,18 @@ local function draw_editor_tabs()
         -- Script Bytecode tab
         if imgui.BeginTabItem("Script") then
             if script_tab then script_tab.draw() end
+            imgui.EndTabItem()
+        end
+
+        -- Frames/Sprites tab
+        if imgui.BeginTabItem("Frames") then
+            if frames_tab then frames_tab.draw() end
+            imgui.EndTabItem()
+        end
+
+        -- Animation Sequences tab
+        if imgui.BeginTabItem("Sequences") then
+            if sequences_tab then sequences_tab.draw() end
             imgui.EndTabItem()
         end
 

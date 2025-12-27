@@ -111,6 +111,44 @@ function M.ee_load_session(name)
                                 EFFECT_EDITOR.header.effect_data_ptr or 0, EFFECT_EDITOR.header.anim_table_ptr or 0))
                             EFFECT_EDITOR.sections = Parser.calculate_sections(EFFECT_EDITOR.header)
 
+                            -- Parse frames section from .bin data
+                            if Parser.parse_frames_section_from_data then
+                                local frames_section_size = EFFECT_EDITOR.header.animation_ptr - EFFECT_EDITOR.header.frames_ptr
+                                EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count = Parser.parse_frames_section_from_data(
+                                    bin_data,
+                                    EFFECT_EDITOR.header.frames_ptr,
+                                    frames_section_size
+                                )
+                                EFFECT_EDITOR.original_framesets = Parser.copy_framesets(EFFECT_EDITOR.framesets)
+                                local total_frames = 0
+                                for _, fs in ipairs(EFFECT_EDITOR.framesets or {}) do
+                                    total_frames = total_frames + #fs.frames
+                                end
+                                logging.log(string.format("  Parsed %d framesets (%d total frames), %d groups from .bin",
+                                    #(EFFECT_EDITOR.framesets or {}), total_frames, EFFECT_EDITOR.frames_group_count or 0))
+                            else
+                                logging.log("  Frames parsing functions not available")
+                            end
+
+                            -- Parse animation sequences from .bin data
+                            if Parser.parse_animation_section_from_data then
+                                local anim_section_size = EFFECT_EDITOR.header.script_data_ptr - EFFECT_EDITOR.header.animation_ptr
+                                EFFECT_EDITOR.sequences, EFFECT_EDITOR.sequence_count = Parser.parse_animation_section_from_data(
+                                    bin_data,
+                                    EFFECT_EDITOR.header.animation_ptr,
+                                    anim_section_size
+                                )
+                                EFFECT_EDITOR.original_sequences = Parser.copy_sequences(EFFECT_EDITOR.sequences)
+                                local total_instructions = 0
+                                for _, seq in ipairs(EFFECT_EDITOR.sequences or {}) do
+                                    total_instructions = total_instructions + #seq.instructions
+                                end
+                                logging.log(string.format("  Parsed %d sequences (%d total instructions) from .bin",
+                                    #(EFFECT_EDITOR.sequences or {}), total_instructions))
+                            else
+                                logging.log("  Sequence parsing functions not available")
+                            end
+
                             local particle_size = EFFECT_EDITOR.header.anim_table_ptr - EFFECT_EDITOR.header.effect_data_ptr
                             EFFECT_EDITOR.emitter_count = Parser.calc_emitter_count(particle_size)
 

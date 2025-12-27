@@ -2262,4 +2262,964 @@ function M.copy_sound_definition(def)
     return copy
 end
 
+--------------------------------------------------------------------------------
+-- Frames Section Parsing
+-- Frame = 24 bytes: flags, texture_page, UV, 4 vertices
+-- Frameset = header (4 bytes) + N frames
+-- Section = group_count + group entries + offset tables + frameset data
+--------------------------------------------------------------------------------
+
+local FRAME_SIZE = 24
+local FRAMESET_HEADER_SIZE = 4
+
+-- Decode flags_byte0 (palette, semi_trans_mode, is_8bpp)
+local function decode_frame_flags_byte0(byte0)
+    return {
+        palette_id = byte0 % 16,                        -- bits 0-3
+        semi_trans_mode = math.floor(byte0 / 32) % 4,   -- bits 5-6
+        is_8bpp = math.floor(byte0 / 128) >= 1,         -- bit 7
+    }
+end
+
+-- Decode flags_byte1 (semi_trans_on, width_signed, height_signed)
+local function decode_frame_flags_byte1(byte1)
+    return {
+        semi_trans_on = math.floor(byte1 / 2) % 2 == 1,    -- bit 1
+        width_signed = math.floor(byte1 / 16) % 2 == 1,    -- bit 4
+        height_signed = math.floor(byte1 / 32) % 2 == 1,   -- bit 5
+    }
+end
+
+-- Encode flags_byte0 from decoded values
+local function encode_frame_flags_byte0(palette_id, semi_trans_mode, is_8bpp)
+    return (palette_id % 16) + (semi_trans_mode % 4) * 32 + (is_8bpp and 128 or 0)
+end
+
+-- Encode flags_byte1 from decoded values
+local function encode_frame_flags_byte1(semi_trans_on, width_signed, height_signed)
+    return (semi_trans_on and 2 or 0) + (width_signed and 16 or 0) + (height_signed and 32 or 0)
+end
+
+-- Decode texture_page (TPAGE register)
+local function decode_texture_page(tpage)
+    return {
+        x_base = tpage % 16,                             -- bits 0-3 (VRAM X / 64)
+        y_base = math.floor(tpage / 16) % 2,             -- bit 4 (VRAM Y / 256)
+        semi_trans_mode = math.floor(tpage / 32) % 4,    -- bits 5-6
+        color_depth = math.floor(tpage / 128) % 4,       -- bits 7-8 (0=4bit, 1=8bit, 2=15bit)
+    }
+end
+
+-- Encode texture_page from decoded values
+local function encode_texture_page(x_base, y_base, semi_trans_mode, color_depth)
+    return (x_base % 16) + (y_base % 2) * 16 + (semi_trans_mode % 4) * 32 + (color_depth % 4) * 128
+end
+
+-- Parse a single frame (24 bytes) from buffer
+local function parse_frame_from_buffer(data, offset, frame_index)
+    local flags_byte0 = mem.buf_read8(data, offset)
+    local flags_byte1 = mem.buf_read8(data, offset + 1)
+    local texture_page = mem.buf_read16(data, offset + 2)
+
+    local uv_x = mem.buf_read8(data, offset + 4)
+    local uv_y = mem.buf_read8(data, offset + 5)
+
+    -- UV width/height can be signed
+    local flags1 = decode_frame_flags_byte1(flags_byte1)
+    local uv_width, uv_height
+    if flags1.width_signed then
+        uv_width = mem.buf_read8(data, offset + 6)
+        if uv_width > 127 then uv_width = uv_width - 256 end
+    else
+        uv_width = mem.buf_read8(data, offset + 6)
+    end
+    if flags1.height_signed then
+        uv_height = mem.buf_read8(data, offset + 7)
+        if uv_height > 127 then uv_height = uv_height - 256 end
+    else
+        uv_height = mem.buf_read8(data, offset + 7)
+    end
+
+    -- Vertices (signed 16-bit)
+    local vtx_tl_x = mem.buf_read16s(data, offset + 8)
+    local vtx_tl_y = mem.buf_read16s(data, offset + 10)
+    local vtx_tr_x = mem.buf_read16s(data, offset + 12)
+    local vtx_tr_y = mem.buf_read16s(data, offset + 14)
+    local vtx_bl_x = mem.buf_read16s(data, offset + 16)
+    local vtx_bl_y = mem.buf_read16s(data, offset + 18)
+    local vtx_br_x = mem.buf_read16s(data, offset + 20)
+    local vtx_br_y = mem.buf_read16s(data, offset + 22)
+
+    local flags0 = decode_frame_flags_byte0(flags_byte0)
+    local tpage = decode_texture_page(texture_page)
+
+    return {
+        index = frame_index,
+        offset = offset,
+        -- Raw bytes for flags
+        flags_byte0 = flags_byte0,
+        flags_byte1 = flags_byte1,
+        texture_page_raw = texture_page,
+        -- Decoded flags
+        palette_id = flags0.palette_id,
+        semi_trans_mode = flags0.semi_trans_mode,
+        is_8bpp = flags0.is_8bpp,
+        semi_trans_on = flags1.semi_trans_on,
+        width_signed = flags1.width_signed,
+        height_signed = flags1.height_signed,
+        -- Decoded texture page
+        tpage_x_base = tpage.x_base,
+        tpage_y_base = tpage.y_base,
+        tpage_blend = tpage.semi_trans_mode,
+        tpage_color_depth = tpage.color_depth,
+        -- UV coordinates
+        uv_x = uv_x,
+        uv_y = uv_y,
+        uv_width = uv_width,
+        uv_height = uv_height,
+        -- Vertices
+        vtx_tl_x = vtx_tl_x,
+        vtx_tl_y = vtx_tl_y,
+        vtx_tr_x = vtx_tr_x,
+        vtx_tr_y = vtx_tr_y,
+        vtx_bl_x = vtx_bl_x,
+        vtx_bl_y = vtx_bl_y,
+        vtx_br_x = vtx_br_x,
+        vtx_br_y = vtx_br_y,
+    }
+end
+
+-- Parse a single frame (24 bytes) from memory
+local function parse_frame_from_memory(addr, frame_index)
+    local flags_byte0 = mem.read8(addr)
+    local flags_byte1 = mem.read8(addr + 1)
+    local texture_page = mem.read16(addr + 2)
+
+    local uv_x = mem.read8(addr + 4)
+    local uv_y = mem.read8(addr + 5)
+
+    local flags1 = decode_frame_flags_byte1(flags_byte1)
+    local uv_width, uv_height
+    if flags1.width_signed then
+        uv_width = mem.read8(addr + 6)
+        if uv_width > 127 then uv_width = uv_width - 256 end
+    else
+        uv_width = mem.read8(addr + 6)
+    end
+    if flags1.height_signed then
+        uv_height = mem.read8(addr + 7)
+        if uv_height > 127 then uv_height = uv_height - 256 end
+    else
+        uv_height = mem.read8(addr + 7)
+    end
+
+    -- Vertices (signed 16-bit)
+    local vtx_tl_x = mem.read16s(addr + 8)
+    local vtx_tl_y = mem.read16s(addr + 10)
+    local vtx_tr_x = mem.read16s(addr + 12)
+    local vtx_tr_y = mem.read16s(addr + 14)
+    local vtx_bl_x = mem.read16s(addr + 16)
+    local vtx_bl_y = mem.read16s(addr + 18)
+    local vtx_br_x = mem.read16s(addr + 20)
+    local vtx_br_y = mem.read16s(addr + 22)
+
+    local flags0 = decode_frame_flags_byte0(flags_byte0)
+    local tpage = decode_texture_page(texture_page)
+
+    return {
+        index = frame_index,
+        offset = nil,  -- Not meaningful for memory reads
+        flags_byte0 = flags_byte0,
+        flags_byte1 = flags_byte1,
+        texture_page_raw = texture_page,
+        palette_id = flags0.palette_id,
+        semi_trans_mode = flags0.semi_trans_mode,
+        is_8bpp = flags0.is_8bpp,
+        semi_trans_on = flags1.semi_trans_on,
+        width_signed = flags1.width_signed,
+        height_signed = flags1.height_signed,
+        tpage_x_base = tpage.x_base,
+        tpage_y_base = tpage.y_base,
+        tpage_blend = tpage.semi_trans_mode,
+        tpage_color_depth = tpage.color_depth,
+        uv_x = uv_x,
+        uv_y = uv_y,
+        uv_width = uv_width,
+        uv_height = uv_height,
+        vtx_tl_x = vtx_tl_x,
+        vtx_tl_y = vtx_tl_y,
+        vtx_tr_x = vtx_tr_x,
+        vtx_tr_y = vtx_tr_y,
+        vtx_bl_x = vtx_bl_x,
+        vtx_bl_y = vtx_bl_y,
+        vtx_br_x = vtx_br_x,
+        vtx_br_y = vtx_br_y,
+    }
+end
+
+-- Parse frames section from file data
+-- Returns: framesets (array), group_count (number)
+function M.parse_frames_section_from_data(data, frames_ptr, section_size)
+    local framesets = {}
+
+    if section_size < 8 then
+        return framesets, 0
+    end
+
+    -- Header: byte 0 = group_count
+    local group_count = mem.buf_read8(data, frames_ptr)
+    local group_entries_end = 4 + group_count * 2  -- offset table starts after group entries
+
+    if group_entries_end >= section_size then
+        return framesets, group_count
+    end
+
+    -- First frameset offset tells us where frame data starts
+    local first_offset = mem.buf_read16(data, frames_ptr + group_entries_end)
+    local frame_sets_data_start = first_offset + 4
+    local max_frame_sets = math.floor((frame_sets_data_start - group_entries_end) / 2)
+
+    if max_frame_sets <= 0 or max_frame_sets > 500 then
+        return framesets, group_count
+    end
+
+    -- Count actual valid entries in offset table
+    local num_frame_sets = 0
+    for i = 0, max_frame_sets - 1 do
+        local offset_pos = group_entries_end + i * 2
+        if offset_pos + 2 > section_size then break end
+        local raw_offset = mem.buf_read16(data, frames_ptr + offset_pos)
+        if raw_offset < first_offset then break end
+        num_frame_sets = num_frame_sets + 1
+    end
+
+    if num_frame_sets <= 0 then
+        return framesets, group_count
+    end
+
+    -- Parse each frameset
+    for fs_idx = 0, num_frame_sets - 1 do
+        local offset_pos = group_entries_end + fs_idx * 2
+        if offset_pos + 2 > section_size then break end
+
+        local raw_offset = mem.buf_read16(data, frames_ptr + offset_pos)
+        local fs_section_offset = raw_offset + 4
+
+        if fs_section_offset + FRAMESET_HEADER_SIZE > section_size then break end
+
+        -- Frameset header
+        local header_flags = mem.buf_read16(data, frames_ptr + fs_section_offset)
+        local frame_count = mem.buf_read16(data, frames_ptr + fs_section_offset + 2)
+
+        if frame_count <= 0 or frame_count > 100 then
+            goto continue
+        end
+
+        local frames = {}
+
+        -- Parse each frame (24 bytes each)
+        for frame_idx = 0, frame_count - 1 do
+            local frame_offset = fs_section_offset + FRAMESET_HEADER_SIZE + frame_idx * FRAME_SIZE
+
+            if frame_offset + FRAME_SIZE > section_size then break end
+
+            local frame = parse_frame_from_buffer(data, frames_ptr + frame_offset, frame_idx)
+            frames[#frames + 1] = frame
+        end
+
+        framesets[#framesets + 1] = {
+            index = fs_idx,
+            file_offset = frames_ptr + fs_section_offset,
+            header_flags = header_flags,
+            frames = frames,
+        }
+
+        ::continue::
+    end
+
+    return framesets, group_count
+end
+
+-- Parse frames section from PSX memory
+function M.parse_frames_section_from_memory(base_addr, frames_ptr, section_size)
+    local addr = base_addr + frames_ptr
+    local framesets = {}
+
+    if section_size < 8 then
+        return framesets, 0
+    end
+
+    local group_count = mem.read8(addr)
+    local group_entries_end = 4 + group_count * 2
+
+    if group_entries_end >= section_size then
+        return framesets, group_count
+    end
+
+    local first_offset = mem.read16(addr + group_entries_end)
+    local frame_sets_data_start = first_offset + 4
+    local max_frame_sets = math.floor((frame_sets_data_start - group_entries_end) / 2)
+
+    if max_frame_sets <= 0 or max_frame_sets > 500 then
+        return framesets, group_count
+    end
+
+    local num_frame_sets = 0
+    for i = 0, max_frame_sets - 1 do
+        local offset_pos = group_entries_end + i * 2
+        if offset_pos + 2 > section_size then break end
+        local raw_offset = mem.read16(addr + offset_pos)
+        if raw_offset < first_offset then break end
+        num_frame_sets = num_frame_sets + 1
+    end
+
+    if num_frame_sets <= 0 then
+        return framesets, group_count
+    end
+
+    for fs_idx = 0, num_frame_sets - 1 do
+        local offset_pos = group_entries_end + fs_idx * 2
+        if offset_pos + 2 > section_size then break end
+
+        local raw_offset = mem.read16(addr + offset_pos)
+        local fs_section_offset = raw_offset + 4
+
+        if fs_section_offset + FRAMESET_HEADER_SIZE > section_size then break end
+
+        local header_flags = mem.read16(addr + fs_section_offset)
+        local frame_count = mem.read16(addr + fs_section_offset + 2)
+
+        if frame_count <= 0 or frame_count > 100 then
+            goto continue
+        end
+
+        local frames = {}
+
+        for frame_idx = 0, frame_count - 1 do
+            local frame_offset = fs_section_offset + FRAMESET_HEADER_SIZE + frame_idx * FRAME_SIZE
+            if frame_offset + FRAME_SIZE > section_size then break end
+
+            local frame = parse_frame_from_memory(addr + frame_offset, frame_idx)
+            frames[#frames + 1] = frame
+        end
+
+        framesets[#framesets + 1] = {
+            index = fs_idx,
+            file_offset = nil,
+            header_flags = header_flags,
+            frames = frames,
+        }
+
+        ::continue::
+    end
+
+    return framesets, group_count
+end
+
+-- Write a single frame to memory
+local function write_frame_to_memory(addr, frame)
+    -- Reconstruct flags bytes from decoded values
+    local flags_byte0 = encode_frame_flags_byte0(frame.palette_id, frame.semi_trans_mode, frame.is_8bpp)
+    local flags_byte1 = encode_frame_flags_byte1(frame.semi_trans_on, frame.width_signed, frame.height_signed)
+    local texture_page = encode_texture_page(frame.tpage_x_base, frame.tpage_y_base, frame.tpage_blend, frame.tpage_color_depth)
+
+    mem.write8(addr, flags_byte0)
+    mem.write8(addr + 1, flags_byte1)
+    mem.write16(addr + 2, texture_page)
+
+    mem.write8(addr + 4, frame.uv_x)
+    mem.write8(addr + 5, frame.uv_y)
+
+    -- Handle signed width/height
+    local uv_width = frame.uv_width
+    local uv_height = frame.uv_height
+    if uv_width < 0 then uv_width = uv_width + 256 end
+    if uv_height < 0 then uv_height = uv_height + 256 end
+    mem.write8(addr + 6, uv_width)
+    mem.write8(addr + 7, uv_height)
+
+    -- Vertices (signed 16-bit) - convert negative to unsigned for write
+    local function s16_to_u16(val)
+        if val < 0 then return val + 65536 end
+        return val
+    end
+    mem.write16(addr + 8, s16_to_u16(frame.vtx_tl_x))
+    mem.write16(addr + 10, s16_to_u16(frame.vtx_tl_y))
+    mem.write16(addr + 12, s16_to_u16(frame.vtx_tr_x))
+    mem.write16(addr + 14, s16_to_u16(frame.vtx_tr_y))
+    mem.write16(addr + 16, s16_to_u16(frame.vtx_bl_x))
+    mem.write16(addr + 18, s16_to_u16(frame.vtx_bl_y))
+    mem.write16(addr + 20, s16_to_u16(frame.vtx_br_x))
+    mem.write16(addr + 22, s16_to_u16(frame.vtx_br_y))
+end
+
+-- Calculate total frames section size for given framesets and group count
+function M.calculate_frames_section_size(framesets, group_count)
+    if not framesets or #framesets == 0 then
+        return 4  -- Minimum header
+    end
+
+    -- Header: 4 bytes (group_count + padding)
+    -- Group entries: group_count * 2 bytes
+    -- Frameset offset table: num_framesets * 2 bytes
+    -- Frameset data: sum of (4 + frame_count * 24) for each frameset
+
+    local header_size = 4
+    local group_entries_size = group_count * 2
+    local offset_table_size = #framesets * 2
+    local framesets_data_size = 0
+
+    for _, fs in ipairs(framesets) do
+        framesets_data_size = framesets_data_size + FRAMESET_HEADER_SIZE + #fs.frames * FRAME_SIZE
+    end
+
+    return header_size + group_entries_size + offset_table_size + framesets_data_size
+end
+
+-- Write frames section to memory
+function M.write_frames_section_to_memory(base_addr, frames_ptr, framesets, group_count)
+    if not framesets or #framesets == 0 then return end
+
+    local addr = base_addr + frames_ptr
+
+    -- Write header: group_count and padding
+    mem.write8(addr, group_count)
+    mem.write8(addr + 1, 0)
+    mem.write8(addr + 2, 0)
+    mem.write8(addr + 3, 0)
+
+    -- Calculate offsets
+    local group_entries_end = 4 + group_count * 2
+    local offset_table_size = #framesets * 2
+    local frameset_data_start = group_entries_end + offset_table_size
+
+    -- Write group entries
+    -- Each group entry is RELATIVE to sprite_def_table_ptr (which is frames_ptr + 4)
+    -- For group 0: offset table is at byte 6, relative to byte 4 = offset 2
+    -- For group N: entry at (4 + N*2), points to that group's offset table relative to byte 4
+    for g = 0, group_count - 1 do
+        -- Group entry position: byte (4 + g*2)
+        -- Value: offset to this group's offset table, relative to byte 4
+        -- For single group, offset table starts at group_entries_end, relative to byte 4 = group_entries_end - 4
+        local group_entry_value = group_entries_end - 4  -- Relative to sprite_def_table_ptr
+        mem.write16(addr + 4 + g * 2, group_entry_value)
+    end
+
+    -- Write frameset offset table and data
+    local current_data_offset = frameset_data_start
+    for fs_idx, fs in ipairs(framesets) do
+        -- Write offset table entry (relative to after the +4 in parsing logic)
+        local offset_table_entry_addr = addr + group_entries_end + (fs_idx - 1) * 2
+        mem.write16(offset_table_entry_addr, current_data_offset - 4)
+
+        -- Write frameset header
+        local fs_addr = addr + current_data_offset
+        mem.write16(fs_addr, fs.header_flags or 0)
+        mem.write16(fs_addr + 2, #fs.frames)
+
+        -- Write frames
+        for frame_idx, frame in ipairs(fs.frames) do
+            local frame_addr = fs_addr + FRAMESET_HEADER_SIZE + (frame_idx - 1) * FRAME_SIZE
+            write_frame_to_memory(frame_addr, frame)
+        end
+
+        current_data_offset = current_data_offset + FRAMESET_HEADER_SIZE + #fs.frames * FRAME_SIZE
+    end
+end
+
+-- Serialize frames section to byte string (for .bin saving)
+function M.serialize_frames_section(framesets, group_count)
+    if not framesets or #framesets == 0 then
+        return string.char(0, 0, 0, 0), 4
+    end
+
+    local bytes = {}
+
+    -- Header: group_count + padding
+    bytes[#bytes + 1] = string.char(group_count, 0, 0, 0)
+
+    -- Calculate structure
+    local group_entries_end = 4 + group_count * 2
+    local offset_table_size = #framesets * 2
+    local frameset_data_start = group_entries_end + offset_table_size
+
+    -- Group entries (relative to sprite_def_table_ptr which is at byte 4)
+    -- For single group: offset table starts at group_entries_end, relative to byte 4 = group_entries_end - 4
+    for g = 1, group_count do
+        local group_entry_value = group_entries_end - 4  -- Relative to sprite_def_table_ptr
+        bytes[#bytes + 1] = string.char(group_entry_value % 256, math.floor(group_entry_value / 256))
+    end
+
+    -- Frameset offset table
+    local current_data_offset = frameset_data_start
+    for _, fs in ipairs(framesets) do
+        local entry = current_data_offset - 4
+        bytes[#bytes + 1] = string.char(entry % 256, math.floor(entry / 256))
+        current_data_offset = current_data_offset + FRAMESET_HEADER_SIZE + #fs.frames * FRAME_SIZE
+    end
+
+    -- Frameset data
+    for _, fs in ipairs(framesets) do
+        -- Frameset header
+        local hf = fs.header_flags or 0
+        local fc = #fs.frames
+        bytes[#bytes + 1] = string.char(hf % 256, math.floor(hf / 256), fc % 256, math.floor(fc / 256))
+
+        -- Frames
+        for _, frame in ipairs(fs.frames) do
+            local flags_byte0 = encode_frame_flags_byte0(frame.palette_id, frame.semi_trans_mode, frame.is_8bpp)
+            local flags_byte1 = encode_frame_flags_byte1(frame.semi_trans_on, frame.width_signed, frame.height_signed)
+            local texture_page = encode_texture_page(frame.tpage_x_base, frame.tpage_y_base, frame.tpage_blend, frame.tpage_color_depth)
+
+            local uv_width = frame.uv_width
+            local uv_height = frame.uv_height
+            if uv_width < 0 then uv_width = uv_width + 256 end
+            if uv_height < 0 then uv_height = uv_height + 256 end
+
+            -- Pack all 24 bytes
+            bytes[#bytes + 1] = string.char(flags_byte0, flags_byte1)
+            bytes[#bytes + 1] = string.char(texture_page % 256, math.floor(texture_page / 256))
+            bytes[#bytes + 1] = string.char(frame.uv_x, frame.uv_y, uv_width, uv_height)
+
+            -- Vertices (signed 16-bit, need to handle negative values)
+            local function s16_to_bytes(val)
+                if val < 0 then val = val + 65536 end
+                return string.char(val % 256, math.floor(val / 256))
+            end
+            bytes[#bytes + 1] = s16_to_bytes(frame.vtx_tl_x) .. s16_to_bytes(frame.vtx_tl_y)
+            bytes[#bytes + 1] = s16_to_bytes(frame.vtx_tr_x) .. s16_to_bytes(frame.vtx_tr_y)
+            bytes[#bytes + 1] = s16_to_bytes(frame.vtx_bl_x) .. s16_to_bytes(frame.vtx_bl_y)
+            bytes[#bytes + 1] = s16_to_bytes(frame.vtx_br_x) .. s16_to_bytes(frame.vtx_br_y)
+        end
+    end
+
+    local result = table.concat(bytes)
+    return result, #result
+end
+
+-- Deep copy a single frame
+function M.copy_frame(frame)
+    if not frame then return nil end
+    return {
+        index = frame.index,
+        offset = frame.offset,
+        flags_byte0 = frame.flags_byte0,
+        flags_byte1 = frame.flags_byte1,
+        texture_page_raw = frame.texture_page_raw,
+        palette_id = frame.palette_id,
+        semi_trans_mode = frame.semi_trans_mode,
+        is_8bpp = frame.is_8bpp,
+        semi_trans_on = frame.semi_trans_on,
+        width_signed = frame.width_signed,
+        height_signed = frame.height_signed,
+        tpage_x_base = frame.tpage_x_base,
+        tpage_y_base = frame.tpage_y_base,
+        tpage_blend = frame.tpage_blend,
+        tpage_color_depth = frame.tpage_color_depth,
+        uv_x = frame.uv_x,
+        uv_y = frame.uv_y,
+        uv_width = frame.uv_width,
+        uv_height = frame.uv_height,
+        vtx_tl_x = frame.vtx_tl_x,
+        vtx_tl_y = frame.vtx_tl_y,
+        vtx_tr_x = frame.vtx_tr_x,
+        vtx_tr_y = frame.vtx_tr_y,
+        vtx_bl_x = frame.vtx_bl_x,
+        vtx_bl_y = frame.vtx_bl_y,
+        vtx_br_x = frame.vtx_br_x,
+        vtx_br_y = frame.vtx_br_y,
+    }
+end
+
+-- Deep copy a frameset
+function M.copy_frameset(frameset)
+    if not frameset then return nil end
+    local copy = {
+        index = frameset.index,
+        file_offset = frameset.file_offset,
+        header_flags = frameset.header_flags,
+        frames = {},
+    }
+    for _, frame in ipairs(frameset.frames) do
+        copy.frames[#copy.frames + 1] = M.copy_frame(frame)
+    end
+    return copy
+end
+
+-- Deep copy all framesets
+function M.copy_framesets(framesets)
+    if not framesets then return nil end
+    local copy = {}
+    for _, fs in ipairs(framesets) do
+        copy[#copy + 1] = M.copy_frameset(fs)
+    end
+    return copy
+end
+
+--------------------------------------------------------------------------------
+-- Animation Sequence Parsing/Writing
+-- Sequences control sprite animation (which frameset to display, for how long)
+-- Animation section at header[0x04]: 4-byte count, offset table, bytecode
+--------------------------------------------------------------------------------
+
+-- Sequence opcode definitions
+-- Validated from wiki_articles/effect_animation_section.txt and disassembly
+M.SEQUENCE_OPCODES = {
+    -- FRAME entries: 0x00-0x7F = frameset_index (3 bytes total)
+    -- Control opcodes: 0x80+ have variable sizes
+    [0x81] = {name = "LOOP", size = 1, params = {}},
+    [0x82] = {name = "SET_OFFSET", size = 5, params = {"offset_x", "offset_y"}},
+    [0x83] = {name = "ADD_OFFSET", size = 3, params = {"delta_x", "delta_y"}},
+}
+
+-- Depth mode names for UI display
+M.DEPTH_MODE_NAMES = {
+    [0] = "Standard (Z>>2)",
+    [1] = "Forward 8 (Z>>2 - 8)",
+    [2] = "Fixed Front (8)",
+    [3] = "Fixed Back (0x17E)",
+    [4] = "Fixed 16 (0x10)",
+    [5] = "Forward 16 (Z>>2 - 16)",
+}
+
+-- Parse single sequence instruction from bytes
+-- Returns instruction table and byte size consumed
+function M.parse_sequence_instruction(data, pos)
+    local byte0 = data:byte(pos)
+
+    if byte0 < 0x80 then
+        -- FRAME entry (3 bytes): frameset_idx, duration, depth_mode
+        return {
+            opcode = byte0,
+            name = "FRAME",
+            params = {
+                byte0,                    -- frameset_index
+                data:byte(pos + 1) or 0,  -- duration
+                data:byte(pos + 2) or 0   -- depth_mode
+            }
+        }, 3
+    elseif byte0 == 0x81 then
+        -- LOOP (1 byte): restart sequence
+        return { opcode = 0x81, name = "LOOP", params = {} }, 1
+    elseif byte0 == 0x82 then
+        -- SET_OFFSET (5 bytes): opcode, offset_x(s16), offset_y(s16)
+        local ox = (data:byte(pos + 1) or 0) + (data:byte(pos + 2) or 0) * 256
+        local oy = (data:byte(pos + 3) or 0) + (data:byte(pos + 4) or 0) * 256
+        -- Convert to signed
+        if ox >= 32768 then ox = ox - 65536 end
+        if oy >= 32768 then oy = oy - 65536 end
+        return { opcode = 0x82, name = "SET_OFFSET", params = {ox, oy} }, 5
+    elseif byte0 == 0x83 then
+        -- ADD_OFFSET (3 bytes): opcode, delta_x(s8), delta_y(s8)
+        local dx = data:byte(pos + 1) or 0
+        local dy = data:byte(pos + 2) or 0
+        -- Convert to signed
+        if dx >= 128 then dx = dx - 256 end
+        if dy >= 128 then dy = dy - 256 end
+        return { opcode = 0x83, name = "ADD_OFFSET", params = {dx, dy} }, 3
+    else
+        -- Unknown opcode, skip 1 byte
+        return { opcode = byte0, name = string.format("UNKNOWN_%02X", byte0), params = {} }, 1
+    end
+end
+
+-- Parse full sequence from byte string
+-- start_pos and end_pos are 1-indexed Lua positions
+-- NOTE: Sequences typically end with a duration=0 FRAME followed by a LOOP.
+-- The duration=0 FRAME stops execution at runtime, so the LOOP is never reached,
+-- but we MUST parse both instructions to preserve the original byte layout.
+function M.parse_sequence(data, start_pos, end_pos)
+    local instructions = {}
+    local pos = start_pos
+
+    while pos <= end_pos do
+        local instr, size = M.parse_sequence_instruction(data, pos)
+        table.insert(instructions, instr)
+        pos = pos + size
+
+        -- Stop ONLY at LOOP (which is the actual terminator in file data)
+        -- Do NOT stop at duration=0 FRAME because a LOOP often follows it
+        if instr.opcode == 0x81 then break end
+    end
+
+    return instructions
+end
+
+-- Parse entire animation section from file data
+-- anim_ptr is 0-indexed file offset
+-- section_size is bytes from animation_ptr to script_ptr
+function M.parse_animation_section_from_data(data, anim_ptr, section_size)
+    local base = anim_ptr + 1  -- Lua 1-indexed
+
+    -- Read animation count (4-byte LE)
+    local count = (data:byte(base) or 0) +
+                  (data:byte(base + 1) or 0) * 256 +
+                  (data:byte(base + 2) or 0) * 65536 +
+                  (data:byte(base + 3) or 0) * 16777216
+
+    if count == 0 or count > 1000 then
+        return {}, 0
+    end
+
+    local sequences = {}
+    for i = 0, count - 1 do
+        -- Offset table at base + 4 + i*2 (u16 offsets, relative to byte 4)
+        local offset_pos = base + 4 + i * 2
+        local offset = (data:byte(offset_pos) or 0) + (data:byte(offset_pos + 1) or 0) * 256
+        local seq_start = base + 4 + offset
+
+        -- Find end (next offset or section end)
+        local seq_end
+        if i < count - 1 then
+            local next_offset = (data:byte(offset_pos + 2) or 0) + (data:byte(offset_pos + 3) or 0) * 256
+            seq_end = base + 4 + next_offset - 1
+        else
+            seq_end = base + section_size - 1
+        end
+
+        local instructions = M.parse_sequence(data, seq_start, seq_end)
+        table.insert(sequences, {
+            index = i,
+            instructions = instructions
+        })
+    end
+
+    return sequences, count
+end
+
+-- Parse animation section from PSX memory
+function M.parse_animation_section_from_memory(base_addr, anim_ptr, section_size)
+    local addr = base_addr + anim_ptr
+
+    -- Read animation count (4-byte LE)
+    local count = mem.read32(addr)
+
+    if count == 0 or count > 1000 then
+        return {}, 0
+    end
+
+    local sequences = {}
+    for i = 0, count - 1 do
+        -- Offset table at addr + 4 + i*2
+        local offset = mem.read16(addr + 4 + i * 2)
+        local seq_addr = addr + 4 + offset
+
+        -- Find end (next offset or section end)
+        local seq_size
+        if i < count - 1 then
+            local next_offset = mem.read16(addr + 4 + (i + 1) * 2)
+            seq_size = next_offset - offset
+        else
+            -- Last sequence: goes to section end
+            seq_size = section_size - 4 - offset
+        end
+
+        -- Read sequence bytes into string
+        local seq_bytes = {}
+        for j = 0, seq_size - 1 do
+            seq_bytes[j + 1] = string.char(mem.read8(seq_addr + j))
+        end
+        local seq_data = table.concat(seq_bytes)
+
+        local instructions = M.parse_sequence(seq_data, 1, seq_size)
+        table.insert(sequences, {
+            index = i,
+            instructions = instructions
+        })
+    end
+
+    return sequences, count
+end
+
+-- Calculate size of a single sequence in bytes
+function M.calculate_sequence_size(instructions)
+    local size = 0
+    for _, instr in ipairs(instructions) do
+        if instr.opcode < 0x80 then
+            size = size + 3  -- FRAME entry
+        elseif instr.opcode == 0x81 then
+            size = size + 1  -- LOOP
+        elseif instr.opcode == 0x82 then
+            size = size + 5  -- SET_OFFSET
+        elseif instr.opcode == 0x83 then
+            size = size + 3  -- ADD_OFFSET
+        else
+            size = size + 1  -- Unknown, assume 1 byte
+        end
+    end
+    return size
+end
+
+-- Calculate total animation section size in bytes
+function M.calculate_animation_section_size(sequences)
+    if not sequences or #sequences == 0 then
+        return 4  -- Just the header (count = 0)
+    end
+
+    local size = 4  -- Header: animation_count (u32)
+    size = size + (#sequences * 2)  -- Offset table
+
+    for _, seq in ipairs(sequences) do
+        size = size + M.calculate_sequence_size(seq.instructions)
+    end
+
+    return size
+end
+
+-- Serialize single sequence instruction to bytes
+function M.serialize_sequence_instruction(instr)
+    local bytes = {}
+
+    if instr.opcode < 0x80 then
+        -- FRAME: frameset_index, duration, depth_mode
+        bytes[1] = instr.params[1] or 0  -- frameset_index
+        bytes[2] = instr.params[2] or 0  -- duration
+        bytes[3] = instr.params[3] or 0  -- depth_mode
+    elseif instr.opcode == 0x81 then
+        -- LOOP
+        bytes[1] = 0x81
+    elseif instr.opcode == 0x82 then
+        -- SET_OFFSET: opcode, offset_x(s16), offset_y(s16)
+        bytes[1] = 0x82
+        local ox = instr.params[1] or 0
+        local oy = instr.params[2] or 0
+        if ox < 0 then ox = ox + 65536 end
+        if oy < 0 then oy = oy + 65536 end
+        bytes[2] = ox % 256
+        bytes[3] = math.floor(ox / 256)
+        bytes[4] = oy % 256
+        bytes[5] = math.floor(oy / 256)
+    elseif instr.opcode == 0x83 then
+        -- ADD_OFFSET: opcode, delta_x(s8), delta_y(s8)
+        bytes[1] = 0x83
+        local dx = instr.params[1] or 0
+        local dy = instr.params[2] or 0
+        if dx < 0 then dx = dx + 256 end
+        if dy < 0 then dy = dy + 256 end
+        bytes[2] = dx
+        bytes[3] = dy
+    else
+        -- Unknown, just write opcode
+        bytes[1] = instr.opcode
+    end
+
+    return bytes
+end
+
+-- Serialize entire animation section to byte string
+function M.serialize_animation_section(sequences)
+    if not sequences or #sequences == 0 then
+        return string.char(0, 0, 0, 0)  -- Count = 0
+    end
+
+    local count = #sequences
+    local result = {}
+
+    -- Header (4 bytes): animation_count as u32 LE
+    result[#result + 1] = string.char(count % 256, math.floor(count / 256) % 256, 0, 0)
+
+    -- Calculate offsets and serialize sequences
+    local offset_table_size = count * 2
+    local current_offset = offset_table_size
+    local seq_data = {}
+    local offsets = {}
+
+    for _, seq in ipairs(sequences) do
+        offsets[#offsets + 1] = current_offset
+        local seq_bytes = {}
+        for _, instr in ipairs(seq.instructions) do
+            local bytes = M.serialize_sequence_instruction(instr)
+            for _, b in ipairs(bytes) do
+                seq_bytes[#seq_bytes + 1] = b
+            end
+        end
+        if #seq_bytes > 0 then
+            seq_data[#seq_data + 1] = string.char(table.unpack(seq_bytes))
+        else
+            seq_data[#seq_data + 1] = ""
+        end
+        current_offset = current_offset + #seq_bytes
+    end
+
+    -- Offset table
+    for _, off in ipairs(offsets) do
+        result[#result + 1] = string.char(off % 256, math.floor(off / 256))
+    end
+
+    -- Sequence data
+    for _, sd in ipairs(seq_data) do
+        result[#result + 1] = sd
+    end
+
+    return table.concat(result)
+end
+
+-- Write animation section to PSX memory
+function M.write_animation_section_to_memory(base_addr, anim_ptr, sequences)
+    if not sequences then return end
+
+    local serialized = M.serialize_animation_section(sequences)
+    local addr = base_addr + anim_ptr
+
+    for i = 1, #serialized do
+        mem.write8(addr + i - 1, serialized:byte(i))
+    end
+end
+
+-- Create a new sequence instruction with default parameters
+function M.create_sequence_instruction(opcode_type)
+    if opcode_type == "FRAME" then
+        return { opcode = 0, name = "FRAME", params = {0, 4, 1} }
+    elseif opcode_type == "LOOP" then
+        return { opcode = 0x81, name = "LOOP", params = {} }
+    elseif opcode_type == "SET_OFFSET" then
+        return { opcode = 0x82, name = "SET_OFFSET", params = {0, 0} }
+    elseif opcode_type == "ADD_OFFSET" then
+        return { opcode = 0x83, name = "ADD_OFFSET", params = {0, 0} }
+    else
+        return { opcode = 0, name = "FRAME", params = {0, 4, 1} }
+    end
+end
+
+-- Deep copy a single sequence
+function M.copy_sequence(seq)
+    if not seq then return nil end
+
+    local copy = { index = seq.index, instructions = {} }
+    for _, instr in ipairs(seq.instructions) do
+        local instr_copy = {
+            opcode = instr.opcode,
+            name = instr.name,
+            params = {}
+        }
+        for i, p in ipairs(instr.params) do
+            instr_copy.params[i] = p
+        end
+        table.insert(copy.instructions, instr_copy)
+    end
+    return copy
+end
+
+-- Deep copy all sequences
+function M.copy_sequences(sequences)
+    if not sequences then return nil end
+
+    local copy = {}
+    for _, seq in ipairs(sequences) do
+        copy[#copy + 1] = M.copy_sequence(seq)
+    end
+    return copy
+end
+
+-- Create a new empty sequence
+function M.create_sequence(index)
+    return {
+        index = index or 0,
+        instructions = {
+            { opcode = 0, name = "FRAME", params = {0, 4, 1} },
+            { opcode = 0x81, name = "LOOP", params = {} }
+        }
+    }
+end
+
 return M
