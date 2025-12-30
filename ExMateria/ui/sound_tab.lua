@@ -9,12 +9,10 @@ local M = {}
 --------------------------------------------------------------------------------
 
 local helpers = nil
-local apply_all_edits_fn = nil
 local Parser = nil
 
-function M.set_dependencies(helpers_module, apply_all_edits, parser_module)
+function M.set_dependencies(helpers_module, parser_module)
     helpers = helpers_module
-    apply_all_edits_fn = apply_all_edits
     Parser = parser_module
 end
 
@@ -697,21 +695,6 @@ function M.draw()
         imgui.TextUnformatted("No effect loaded.")
         return
     end
-
-    -- Apply button at top
-    if EFFECT_EDITOR.memory_base >= 0x80000000 then
-        if imgui.Button("Apply All to Memory##sound") then
-            if apply_all_edits_fn then
-                apply_all_edits_fn()
-            end
-        end
-        imgui.SameLine()
-        imgui.TextUnformatted(string.format("(Target: 0x%08X)", EFFECT_EDITOR.memory_base))
-    else
-        imgui.TextUnformatted("(Apply to Memory - no target set)")
-    end
-
-    imgui.Separator()
 
     -- Section 1: Opcode Reference (collapsed by default, at top for quick access)
     draw_reference_section()

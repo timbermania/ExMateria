@@ -386,12 +386,13 @@ end
 local function write_frames_section(base, header, silent)
     if not EFFECT_EDITOR.framesets or #EFFECT_EDITOR.framesets == 0 then return {} end
 
-    Parser.write_frames_section_to_memory(base, header.frames_ptr, EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count)
+    -- Pass offset_table_count to preserve original layout (including null terminator if present)
+    Parser.write_frames_section_to_memory(base, header.frames_ptr, EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count)
     local total_frames = 0
     for _, fs in ipairs(EFFECT_EDITOR.framesets) do
         total_frames = total_frames + #fs.frames
     end
-    if not silent then log(string.format("  Wrote %d framesets (%d frames)", #EFFECT_EDITOR.framesets, total_frames)) end
+    if not silent then log(string.format("  Wrote %d framesets (%d frames), offset_table_count=%d", #EFFECT_EDITOR.framesets, total_frames, EFFECT_EDITOR.frames_offset_table_count or 0)) end
     return {string.format("%d framesets", #EFFECT_EDITOR.framesets)}
 end
 
@@ -587,11 +588,21 @@ local function write_script(base, header, silent)
     end
 
     local script_size = Parser.calculate_script_size(EFFECT_EDITOR.script_instructions)
+    local section_size = header.effect_data_ptr - header.script_data_ptr
+
+    -- DEBUG: Check for overflow BEFORE writing
+    if script_size > section_size then
+        print(string.format("[WRITE_SCRIPT] !!! OVERFLOW DETECTED !!! script_size=%d > section_size=%d (overflow by %d bytes)",
+            script_size, section_size, script_size - section_size))
+        print(string.format("[WRITE_SCRIPT] This will corrupt effect_data! script_ptr=0x%X, effect_data_ptr=0x%X",
+            header.script_data_ptr, header.effect_data_ptr))
+    end
+
     if not silent then
         print(string.format("[WRITE_SCRIPT] Writing %d instructions (%d bytes) to base=0x%08X + script_ptr=0x%X = 0x%08X",
             #EFFECT_EDITOR.script_instructions, script_size, base, header.script_data_ptr, base + header.script_data_ptr))
-        print(string.format("[WRITE_SCRIPT] Header: script=0x%X, effect_data=0x%X, anim_table=0x%X",
-            header.script_data_ptr, header.effect_data_ptr, header.anim_table_ptr))
+        print(string.format("[WRITE_SCRIPT] Header: script=0x%X, effect_data=0x%X, section_size=%d",
+            header.script_data_ptr, header.effect_data_ptr, section_size))
     end
 
     Parser.write_script_to_memory(base, header.script_data_ptr, EFFECT_EDITOR.script_instructions)
@@ -654,6 +665,7 @@ function M.apply_all_edits_to_memory(silent)
     for _, item in ipairs(write_frames_section(base, header, silent)) do
         table.insert(applied, item)
     end
+
     -- Animation (sequences) section (after frames, before script)
     for _, item in ipairs(write_animation_section(base, header, silent)) do
         table.insert(applied, item)
@@ -729,6 +741,230 @@ function M.apply_single_curve_to_memory(curve_index)
 end
 
 --------------------------------------------------------------------------------
+-- Unified Loader Infrastructure
+--------------------------------------------------------------------------------
+
+-- Create dispatch table for parser functions
+-- source_type: "file" or "memory"
+-- source: file data string (file) or base address (memory)
+local function get_parser_dispatch(source_type, source)
+    if source_type == "file" then
+        return {
+            parse_header = function()
+                return Parser.parse_header_from_data(source)
+            end,
+            parse_frames = function(offset, size)
+                return Parser.parse_frames_section_from_data(source, offset, size)
+            end,
+            parse_animation = function(offset, size)
+                return Parser.parse_animation_section_from_data(source, offset, size)
+            end,
+            parse_script = function(offset, size)
+                return Parser.parse_script_from_data(source, offset, size)
+            end,
+            parse_particle_header = function(offset)
+                return Parser.parse_particle_header_from_data(source, offset)
+            end,
+            parse_all_emitters = function(offset, count)
+                return Parser.parse_all_emitters(source, offset, count)
+            end,
+            parse_curves = function(offset)
+                return Parser.parse_curves_from_data(source, offset)
+            end,
+            parse_timeline_header = function(offset)
+                return Parser.parse_timeline_header_from_data(source, offset)
+            end,
+            parse_all_timeline_channels = function(offset)
+                return Parser.parse_all_timeline_channels(source, offset)
+            end,
+            parse_all_camera_tables = function(offset)
+                return Parser.parse_all_camera_tables(source, offset)
+            end,
+            parse_all_color_tracks = function(offset)
+                return Parser.parse_all_color_tracks(source, offset)
+            end,
+            parse_timing_curves = function(offset)
+                return Parser.parse_timing_curves_from_data(source, offset)
+            end,
+            parse_effect_flags = function(offset)
+                return Parser.parse_effect_flags_from_data(source, offset)
+            end,
+            parse_sound_flags = function(offset)
+                return Parser.parse_sound_flags_from_data(source, offset)
+            end,
+            parse_sound_definition = function(offset, size)
+                return Parser.parse_sound_definition_from_data(source, offset, size)
+            end,
+        }
+    else
+        -- Memory source
+        return {
+            parse_header = function()
+                return Parser.parse_header_from_memory(source)
+            end,
+            parse_frames = function(offset, size)
+                return Parser.parse_frames_section_from_memory(source, offset, size)
+            end,
+            parse_animation = function(offset, size)
+                return Parser.parse_animation_section_from_memory(source, offset, size)
+            end,
+            parse_script = function(offset, size)
+                return Parser.parse_script_from_memory(source, offset, size)
+            end,
+            parse_particle_header = function(offset)
+                -- No Parser function for memory - inline read
+                local addr = source + offset
+                return {
+                    constant = MemUtils.read16(addr + 0x00),
+                    emitter_count = MemUtils.read16(addr + 0x02),
+                    gravity_x = MemUtils.read32(addr + 0x04),
+                    gravity_y = MemUtils.read32(addr + 0x08),
+                    gravity_z = MemUtils.read32(addr + 0x0C),
+                    inertia_threshold = MemUtils.read32(addr + 0x10)
+                }
+            end,
+            parse_all_emitters = function(offset, count)
+                return Parser.parse_all_emitters_from_memory(source + offset, count)
+            end,
+            parse_curves = function(offset)
+                return Parser.parse_curves_from_memory(source + offset)
+            end,
+            parse_timeline_header = function(offset)
+                return Parser.parse_timeline_header_from_memory(source + offset)
+            end,
+            parse_all_timeline_channels = function(offset)
+                return Parser.parse_all_timeline_channels_from_memory(source, offset)
+            end,
+            parse_all_camera_tables = function(offset)
+                return Parser.parse_all_camera_tables_from_memory(source, offset)
+            end,
+            parse_all_color_tracks = function(offset)
+                return Parser.parse_all_color_tracks_from_memory(source, offset)
+            end,
+            parse_timing_curves = function(offset)
+                return Parser.parse_timing_curves_from_memory(source, offset)
+            end,
+            parse_effect_flags = function(offset)
+                return Parser.parse_effect_flags_from_memory(source, offset)
+            end,
+            parse_sound_flags = function(offset)
+                return Parser.parse_sound_flags_from_memory(source, offset)
+            end,
+            parse_sound_definition = function(offset, size)
+                return Parser.parse_sound_definition_from_memory(source, offset, size)
+            end,
+        }
+    end
+end
+
+-- Parse all effect sections using dispatch table
+-- parsers: dispatch table from get_parser_dispatch
+-- log_fn: logging function to use
+local function parse_all_sections(parsers, log_fn)
+    local header = EFFECT_EDITOR.header
+
+    -- Frames section
+    local frames_size = header.animation_ptr - header.frames_ptr
+    EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count =
+        parsers.parse_frames(header.frames_ptr, frames_size)
+    EFFECT_EDITOR.original_framesets = Parser.copy_framesets(EFFECT_EDITOR.framesets)
+    local total_frames = 0
+    for _, fs in ipairs(EFFECT_EDITOR.framesets) do total_frames = total_frames + #fs.frames end
+    log_fn(string.format("  Loaded %d framesets (%d frames), %d groups",
+        #EFFECT_EDITOR.framesets, total_frames, EFFECT_EDITOR.frames_group_count))
+
+    -- Animation (sequences) section
+    local anim_size = header.script_data_ptr - header.animation_ptr
+    EFFECT_EDITOR.sequences, EFFECT_EDITOR.sequence_count = parsers.parse_animation(header.animation_ptr, anim_size)
+    EFFECT_EDITOR.original_sequences = Parser.copy_sequences(EFFECT_EDITOR.sequences)
+    local total_instr = 0
+    for _, seq in ipairs(EFFECT_EDITOR.sequences) do total_instr = total_instr + #seq.instructions end
+    log_fn(string.format("  Loaded %d sequences (%d instructions)", #EFFECT_EDITOR.sequences, total_instr))
+
+    -- Script bytecode
+    local script_size = header.effect_data_ptr - header.script_data_ptr
+    EFFECT_EDITOR.script_instructions = parsers.parse_script(header.script_data_ptr, script_size)
+    EFFECT_EDITOR.original_script_instructions = Parser.copy_script_instructions(EFFECT_EDITOR.script_instructions)
+    log_fn(string.format("  Loaded %d script instructions (%d bytes)", #EFFECT_EDITOR.script_instructions, script_size))
+
+    -- Particle system (header + emitters)
+    local particle_size = header.anim_table_ptr - header.effect_data_ptr
+    EFFECT_EDITOR.emitter_count = Parser.calc_emitter_count(particle_size)
+    EFFECT_EDITOR.particle_header = parsers.parse_particle_header(header.effect_data_ptr)
+    EFFECT_EDITOR.emitters = parsers.parse_all_emitters(header.effect_data_ptr, EFFECT_EDITOR.emitter_count)
+    log_fn(string.format("  Loaded particle header + %d emitters", EFFECT_EDITOR.emitter_count))
+
+    -- Animation curves
+    EFFECT_EDITOR.curves, EFFECT_EDITOR.curve_count = parsers.parse_curves(header.anim_table_ptr)
+    EFFECT_EDITOR.original_curves = Parser.copy_curves(EFFECT_EDITOR.curves)
+    log_fn(string.format("  Loaded %d animation curves", EFFECT_EDITOR.curve_count))
+
+    -- Timeline section (header + channels)
+    EFFECT_EDITOR.timeline_header = parsers.parse_timeline_header(header.timeline_section_ptr)
+    EFFECT_EDITOR.timeline_channels = parsers.parse_all_timeline_channels(header.timeline_section_ptr)
+    EFFECT_EDITOR.original_timeline_header = Parser.copy_timeline_header(EFFECT_EDITOR.timeline_header)
+    EFFECT_EDITOR.original_timeline_channels = Parser.copy_timeline_channels(EFFECT_EDITOR.timeline_channels)
+    log_fn(string.format("  Loaded timeline header + %d channels", #EFFECT_EDITOR.timeline_channels))
+
+    -- Camera tables
+    EFFECT_EDITOR.camera_tables = parsers.parse_all_camera_tables(header.timeline_section_ptr)
+    EFFECT_EDITOR.original_camera_tables = Parser.copy_camera_tables(EFFECT_EDITOR.camera_tables)
+    log_fn(string.format("  Loaded %d camera tables", #EFFECT_EDITOR.camera_tables))
+
+    -- Color tracks
+    EFFECT_EDITOR.color_tracks = parsers.parse_all_color_tracks(header.timeline_section_ptr)
+    EFFECT_EDITOR.original_color_tracks = Parser.copy_color_tracks(EFFECT_EDITOR.color_tracks)
+    log_fn(string.format("  Loaded %d color tracks", #EFFECT_EDITOR.color_tracks))
+
+    -- Timing curves (may be nil)
+    EFFECT_EDITOR.timing_curves = parsers.parse_timing_curves(header.timing_curve_ptr)
+    EFFECT_EDITOR.original_timing_curves = Parser.copy_timing_curves(EFFECT_EDITOR.timing_curves)
+    if EFFECT_EDITOR.timing_curves then
+        log_fn("  Loaded timing curves")
+    else
+        log_fn("  No timing curves (ptr=0)")
+    end
+
+    -- Effect flags
+    EFFECT_EDITOR.effect_flags = parsers.parse_effect_flags(header.effect_flags_ptr)
+    EFFECT_EDITOR.original_effect_flags = Parser.copy_effect_flags(EFFECT_EDITOR.effect_flags)
+    log_fn(string.format("  Loaded effect flags: 0x%02X", EFFECT_EDITOR.effect_flags.flags_byte))
+
+    -- Sound flags
+    EFFECT_EDITOR.sound_flags = parsers.parse_sound_flags(header.effect_flags_ptr)
+    EFFECT_EDITOR.original_sound_flags = Parser.copy_sound_flags(EFFECT_EDITOR.sound_flags)
+    log_fn("  Loaded 4 sound config channels")
+
+    -- Sound definition (feds section)
+    local sound_size = header.texture_ptr - header.sound_def_ptr
+    if sound_size > 0 then
+        EFFECT_EDITOR.sound_definition = parsers.parse_sound_definition(header.sound_def_ptr, sound_size)
+        EFFECT_EDITOR.original_sound_definition = Parser.copy_sound_definition(EFFECT_EDITOR.sound_definition)
+        if EFFECT_EDITOR.sound_definition then
+            log_fn(string.format("  Loaded feds: %d channels, resource_id=%d",
+                EFFECT_EDITOR.sound_definition.num_channels, EFFECT_EDITOR.sound_definition.resource_id))
+        else
+            log_fn("  No valid feds section")
+        end
+    else
+        EFFECT_EDITOR.sound_definition = nil
+        EFFECT_EDITOR.original_sound_definition = nil
+        log_fn("  No sound definition (size=0)")
+    end
+
+    -- Store original state for structure change detection
+    EFFECT_EDITOR.original_emitter_count = EFFECT_EDITOR.emitter_count
+    EFFECT_EDITOR.original_header = {
+        anim_table_ptr = header.anim_table_ptr,
+        timing_curve_ptr = header.timing_curve_ptr,
+        effect_flags_ptr = header.effect_flags_ptr,
+        timeline_section_ptr = header.timeline_section_ptr,
+        sound_def_ptr = header.sound_def_ptr,
+        texture_ptr = header.texture_ptr,
+    }
+end
+
+--------------------------------------------------------------------------------
 -- File Loading
 --------------------------------------------------------------------------------
 
@@ -752,139 +988,19 @@ function M.load_effect_file(effect_num)
     EFFECT_EDITOR.file_path = path
     EFFECT_EDITOR.file_name = filename
 
-    -- Parse header
-    log_verbose("Parsing header...")
-    EFFECT_EDITOR.header = Parser.parse_header_from_data(data)
+    -- Parse header and all sections using dispatch
+    local parsers = get_parser_dispatch("file", data)
+    EFFECT_EDITOR.header = parsers.parse_header()
     EFFECT_EDITOR.sections = Parser.calculate_sections(EFFECT_EDITOR.header)
-
-    -- Parse frames section
-    log_verbose("Parsing frames section...")
-    local frames_section_size = EFFECT_EDITOR.header.animation_ptr - EFFECT_EDITOR.header.frames_ptr
-    EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count = Parser.parse_frames_section_from_data(data, EFFECT_EDITOR.header.frames_ptr, frames_section_size)
-    EFFECT_EDITOR.original_framesets = Parser.copy_framesets(EFFECT_EDITOR.framesets)
-    local total_frames = 0
-    for _, fs in ipairs(EFFECT_EDITOR.framesets) do
-        total_frames = total_frames + #fs.frames
-    end
-    log_verbose(string.format("  Loaded %d framesets (%d total frames), %d groups", #EFFECT_EDITOR.framesets, total_frames, EFFECT_EDITOR.frames_group_count))
-
-    -- Parse animation (sequences) section
-    log_verbose("Parsing animation sequences...")
-    local anim_section_size = EFFECT_EDITOR.header.script_data_ptr - EFFECT_EDITOR.header.animation_ptr
-    EFFECT_EDITOR.sequences, EFFECT_EDITOR.sequence_count = Parser.parse_animation_section_from_data(data, EFFECT_EDITOR.header.animation_ptr, anim_section_size)
-    EFFECT_EDITOR.original_sequences = Parser.copy_sequences(EFFECT_EDITOR.sequences)
-    local total_instructions = 0
-    for _, seq in ipairs(EFFECT_EDITOR.sequences) do
-        total_instructions = total_instructions + #seq.instructions
-    end
-    log_verbose(string.format("  Loaded %d sequences (%d total instructions)", #EFFECT_EDITOR.sequences, total_instructions))
-
-    -- Parse script bytecode
-    log_verbose("Parsing script bytecode...")
-    local script_size = EFFECT_EDITOR.header.effect_data_ptr - EFFECT_EDITOR.header.script_data_ptr
-    EFFECT_EDITOR.script_instructions = Parser.parse_script_from_data(data, EFFECT_EDITOR.header.script_data_ptr, script_size)
-    EFFECT_EDITOR.original_script_instructions = Parser.copy_script_instructions(EFFECT_EDITOR.script_instructions)
-    log_verbose(string.format("  Loaded %d script instructions (%d bytes)", #EFFECT_EDITOR.script_instructions, script_size))
-
-    -- Calculate emitter count
-    local particle_size = EFFECT_EDITOR.header.anim_table_ptr - EFFECT_EDITOR.header.effect_data_ptr
-    EFFECT_EDITOR.emitter_count = Parser.calc_emitter_count(particle_size)
-
-    -- Parse particle system header and emitters
-    log_verbose("Parsing particle system...")
-    EFFECT_EDITOR.particle_header = Parser.parse_particle_header_from_data(data, EFFECT_EDITOR.header.effect_data_ptr)
-    EFFECT_EDITOR.emitters = Parser.parse_all_emitters(data, EFFECT_EDITOR.header.effect_data_ptr, EFFECT_EDITOR.emitter_count)
-
-    log_verbose(string.format("  Particle header: constant=%d, emitter_count=%d",
-        EFFECT_EDITOR.particle_header.constant, EFFECT_EDITOR.particle_header.emitter_count))
-    log_verbose(string.format("  Gravity: (%d, %d, %d)",
-        EFFECT_EDITOR.particle_header.gravity_x, EFFECT_EDITOR.particle_header.gravity_y, EFFECT_EDITOR.particle_header.gravity_z))
-
-    -- Parse animation curves
-    log_verbose("Parsing animation curves...")
-    EFFECT_EDITOR.curves, EFFECT_EDITOR.curve_count = Parser.parse_curves_from_data(data, EFFECT_EDITOR.header.anim_table_ptr)
-    EFFECT_EDITOR.original_curves = Parser.copy_curves(EFFECT_EDITOR.curves)
-    log_verbose(string.format("  Loaded %d animation curves", EFFECT_EDITOR.curve_count))
-
-    -- Parse timeline section
-    log_verbose("Parsing timeline section...")
-    EFFECT_EDITOR.timeline_header = Parser.parse_timeline_header_from_data(data, EFFECT_EDITOR.header.timeline_section_ptr)
-    EFFECT_EDITOR.timeline_channels = Parser.parse_all_timeline_channels(data, EFFECT_EDITOR.header.timeline_section_ptr)
-    EFFECT_EDITOR.original_timeline_header = Parser.copy_timeline_header(EFFECT_EDITOR.timeline_header)
-    EFFECT_EDITOR.original_timeline_channels = Parser.copy_timeline_channels(EFFECT_EDITOR.timeline_channels)
-    log_verbose(string.format("  Loaded timeline header and %d particle channels", #EFFECT_EDITOR.timeline_channels))
-
-    -- Parse camera timeline tables
-    log_verbose("Parsing camera timeline...")
-    EFFECT_EDITOR.camera_tables = Parser.parse_all_camera_tables(data, EFFECT_EDITOR.header.timeline_section_ptr)
-    EFFECT_EDITOR.original_camera_tables = Parser.copy_camera_tables(EFFECT_EDITOR.camera_tables)
-    log_verbose(string.format("  Loaded %d camera tables", #EFFECT_EDITOR.camera_tables))
-
-    -- Parse color tracks
-    log_verbose("Parsing color tracks...")
-    EFFECT_EDITOR.color_tracks = Parser.parse_all_color_tracks(data, EFFECT_EDITOR.header.timeline_section_ptr)
-    EFFECT_EDITOR.original_color_tracks = Parser.copy_color_tracks(EFFECT_EDITOR.color_tracks)
-    log_verbose(string.format("  Loaded %d color tracks", #EFFECT_EDITOR.color_tracks))
-
-    -- Parse timing curves (may be nil if timing_curve_ptr is 0)
-    log_verbose("Parsing timing curves...")
-    EFFECT_EDITOR.timing_curves = Parser.parse_timing_curves_from_data(data, EFFECT_EDITOR.header.timing_curve_ptr)
-    EFFECT_EDITOR.original_timing_curves = Parser.copy_timing_curves(EFFECT_EDITOR.timing_curves)
-    if EFFECT_EDITOR.timing_curves then
-        log_verbose("  Loaded timing curves (600 frames per region)")
-    else
-        log_verbose("  No timing curves (timing_curve_ptr = 0)")
-    end
-
-    -- Parse effect flags
-    log_verbose("Parsing effect flags...")
-    EFFECT_EDITOR.effect_flags = Parser.parse_effect_flags_from_data(data, EFFECT_EDITOR.header.effect_flags_ptr)
-    EFFECT_EDITOR.original_effect_flags = Parser.copy_effect_flags(EFFECT_EDITOR.effect_flags)
-    log_verbose(string.format("  Loaded effect flags: 0x%02X", EFFECT_EDITOR.effect_flags.flags_byte))
-
-    -- Parse sound flags from file data (effect_flags section bytes 0x08-0x17)
-    log_verbose("Parsing sound flags...")
-    EFFECT_EDITOR.sound_flags = Parser.parse_sound_flags_from_data(data, EFFECT_EDITOR.header.effect_flags_ptr)
-    EFFECT_EDITOR.original_sound_flags = Parser.copy_sound_flags(EFFECT_EDITOR.sound_flags)
-    log_verbose("  Loaded 4 sound config channels")
-
-    -- Parse sound definition (feds section) from file data
-    log_verbose("Parsing sound definition...")
-    local sound_section_size = EFFECT_EDITOR.header.texture_ptr - EFFECT_EDITOR.header.sound_def_ptr
-    if sound_section_size > 0 then
-        EFFECT_EDITOR.sound_definition = Parser.parse_sound_definition_from_data(data, EFFECT_EDITOR.header.sound_def_ptr, sound_section_size)
-        EFFECT_EDITOR.original_sound_definition = Parser.copy_sound_definition(EFFECT_EDITOR.sound_definition)
-        if EFFECT_EDITOR.sound_definition then
-            log_verbose(string.format("  Loaded feds section: %d channels, resource_id=%d",
-                EFFECT_EDITOR.sound_definition.num_channels, EFFECT_EDITOR.sound_definition.resource_id))
-        else
-            log_verbose("  No valid feds section found")
-        end
-    else
-        EFFECT_EDITOR.sound_definition = nil
-        EFFECT_EDITOR.original_sound_definition = nil
-        log_verbose("  No sound definition section (size=0)")
-    end
-
-    -- Store original state for structure change detection
-    EFFECT_EDITOR.original_emitter_count = EFFECT_EDITOR.emitter_count
-    EFFECT_EDITOR.original_header = {
-        anim_table_ptr = EFFECT_EDITOR.header.anim_table_ptr,
-        timing_curve_ptr = EFFECT_EDITOR.header.timing_curve_ptr,
-        effect_flags_ptr = EFFECT_EDITOR.header.effect_flags_ptr,
-        timeline_section_ptr = EFFECT_EDITOR.header.timeline_section_ptr,
-        sound_def_ptr = EFFECT_EDITOR.header.sound_def_ptr,
-        texture_ptr = EFFECT_EDITOR.header.texture_ptr,
-    }
+    parse_all_sections(parsers, log_verbose)
 
     local msg = string.format("Loaded %s (%d bytes, %s format, %d emitters, %d curves)",
         filename, #data, EFFECT_EDITOR.header.format, EFFECT_EDITOR.emitter_count, EFFECT_EDITOR.curve_count)
     log(msg)
     EFFECT_EDITOR.status_msg = msg
 
-    log_verbose(string.format("  frames_ptr: 0x%X", EFFECT_EDITOR.header.frames_ptr))
-    log_verbose(string.format("  effect_data_ptr: 0x%X", EFFECT_EDITOR.header.effect_data_ptr))
-    log_verbose(string.format("  anim_table_ptr: 0x%X", EFFECT_EDITOR.header.anim_table_ptr))
+    log_verbose(string.format("  frames_ptr: 0x%X, effect_data_ptr: 0x%X, anim_table_ptr: 0x%X",
+        EFFECT_EDITOR.header.frames_ptr, EFFECT_EDITOR.header.effect_data_ptr, EFFECT_EDITOR.header.anim_table_ptr))
 
     return true
 end
@@ -898,132 +1014,13 @@ function M.load_from_memory_internal(base_addr)
     log(string.format("Loading from memory at 0x%08X", base_addr))
     MemUtils.refresh_mem()
 
-    -- Lookup table stores HEADER address directly (NOT size prefix address)
-    -- Header pointer VALUES are offsets from header start (same as file offsets)
-    local header_location = base_addr  -- No +4, lookup table already points to header
-    log(string.format("  Header at 0x%08X", header_location))
-
     EFFECT_EDITOR.memory_base = base_addr
-    EFFECT_EDITOR.header = Parser.parse_header_from_memory(header_location)
+
+    -- Parse header and all sections using dispatch
+    local parsers = get_parser_dispatch("memory", base_addr)
+    EFFECT_EDITOR.header = parsers.parse_header()
     EFFECT_EDITOR.sections = Parser.calculate_sections(EFFECT_EDITOR.header)
-
-    -- Parse frames section from memory
-    local frames_section_size = EFFECT_EDITOR.header.animation_ptr - EFFECT_EDITOR.header.frames_ptr
-    EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count = Parser.parse_frames_section_from_memory(base_addr, EFFECT_EDITOR.header.frames_ptr, frames_section_size)
-    EFFECT_EDITOR.original_framesets = Parser.copy_framesets(EFFECT_EDITOR.framesets)
-    local total_frames = 0
-    for _, fs in ipairs(EFFECT_EDITOR.framesets) do
-        total_frames = total_frames + #fs.frames
-    end
-    log(string.format("  Loaded %d framesets (%d total frames), %d groups from memory", #EFFECT_EDITOR.framesets, total_frames, EFFECT_EDITOR.frames_group_count))
-
-    -- Parse animation (sequences) section from memory
-    local anim_section_size = EFFECT_EDITOR.header.script_data_ptr - EFFECT_EDITOR.header.animation_ptr
-    EFFECT_EDITOR.sequences, EFFECT_EDITOR.sequence_count = Parser.parse_animation_section_from_memory(base_addr, EFFECT_EDITOR.header.animation_ptr, anim_section_size)
-    EFFECT_EDITOR.original_sequences = Parser.copy_sequences(EFFECT_EDITOR.sequences)
-    local total_instructions = 0
-    for _, seq in ipairs(EFFECT_EDITOR.sequences) do
-        total_instructions = total_instructions + #seq.instructions
-    end
-    log(string.format("  Loaded %d sequences (%d total instructions) from memory", #EFFECT_EDITOR.sequences, total_instructions))
-
-    -- Parse script bytecode from memory
-    local script_size = EFFECT_EDITOR.header.effect_data_ptr - EFFECT_EDITOR.header.script_data_ptr
-    EFFECT_EDITOR.script_instructions = Parser.parse_script_from_memory(base_addr, EFFECT_EDITOR.header.script_data_ptr, script_size)
-    EFFECT_EDITOR.original_script_instructions = Parser.copy_script_instructions(EFFECT_EDITOR.script_instructions)
-    log(string.format("  Loaded %d script instructions (%d bytes) from memory", #EFFECT_EDITOR.script_instructions, script_size))
-
-    local particle_size = EFFECT_EDITOR.header.anim_table_ptr - EFFECT_EDITOR.header.effect_data_ptr
-    EFFECT_EDITOR.emitter_count = Parser.calc_emitter_count(particle_size)
-
-    -- Parse particle system and emitters from memory
-    -- Header pointer values are relative to base_addr (NOT header_location)
-    local particle_addr = base_addr + EFFECT_EDITOR.header.effect_data_ptr
-    EFFECT_EDITOR.particle_header = {
-        constant = MemUtils.read16(particle_addr + 0x00),
-        emitter_count = MemUtils.read16(particle_addr + 0x02),
-        gravity_x = MemUtils.read32(particle_addr + 0x04),
-        gravity_y = MemUtils.read32(particle_addr + 0x08),
-        gravity_z = MemUtils.read32(particle_addr + 0x0C),
-        inertia_threshold = MemUtils.read32(particle_addr + 0x10)
-    }
-
-    -- Parse emitters from memory
-    EFFECT_EDITOR.emitters = Parser.parse_all_emitters_from_memory(
-        particle_addr,
-        EFFECT_EDITOR.emitter_count
-    )
-
-    -- Parse animation curves from memory
-    local anim_table_addr = base_addr + EFFECT_EDITOR.header.anim_table_ptr
-    EFFECT_EDITOR.curves, EFFECT_EDITOR.curve_count = Parser.parse_curves_from_memory(anim_table_addr)
-    EFFECT_EDITOR.original_curves = Parser.copy_curves(EFFECT_EDITOR.curves)
-    log(string.format("  Loaded %d animation curves from memory", EFFECT_EDITOR.curve_count))
-
-    -- Parse timeline section from memory
-    local timeline_addr = base_addr + EFFECT_EDITOR.header.timeline_section_ptr
-    EFFECT_EDITOR.timeline_header = Parser.parse_timeline_header_from_memory(timeline_addr)
-    EFFECT_EDITOR.timeline_channels = Parser.parse_all_timeline_channels_from_memory(base_addr, EFFECT_EDITOR.header.timeline_section_ptr)
-    EFFECT_EDITOR.original_timeline_header = Parser.copy_timeline_header(EFFECT_EDITOR.timeline_header)
-    EFFECT_EDITOR.original_timeline_channels = Parser.copy_timeline_channels(EFFECT_EDITOR.timeline_channels)
-    log(string.format("  Loaded timeline header and %d particle channels from memory", #EFFECT_EDITOR.timeline_channels))
-
-    -- Parse camera timeline tables from memory
-    EFFECT_EDITOR.camera_tables = Parser.parse_all_camera_tables_from_memory(base_addr, EFFECT_EDITOR.header.timeline_section_ptr)
-    EFFECT_EDITOR.original_camera_tables = Parser.copy_camera_tables(EFFECT_EDITOR.camera_tables)
-    log(string.format("  Loaded %d camera tables from memory", #EFFECT_EDITOR.camera_tables))
-
-    -- Parse color tracks from memory
-    EFFECT_EDITOR.color_tracks = Parser.parse_all_color_tracks_from_memory(base_addr, EFFECT_EDITOR.header.timeline_section_ptr)
-    EFFECT_EDITOR.original_color_tracks = Parser.copy_color_tracks(EFFECT_EDITOR.color_tracks)
-    log(string.format("  Loaded %d color tracks from memory", #EFFECT_EDITOR.color_tracks))
-
-    -- Parse timing curves from memory
-    EFFECT_EDITOR.timing_curves = Parser.parse_timing_curves_from_memory(base_addr, EFFECT_EDITOR.header.timing_curve_ptr)
-    EFFECT_EDITOR.original_timing_curves = Parser.copy_timing_curves(EFFECT_EDITOR.timing_curves)
-    if EFFECT_EDITOR.timing_curves then
-        log("  Loaded timing curves from memory")
-    else
-        log("  No timing curves (timing_curve_ptr = 0)")
-    end
-
-    -- Parse effect flags from memory
-    EFFECT_EDITOR.effect_flags = Parser.parse_effect_flags_from_memory(base_addr, EFFECT_EDITOR.header.effect_flags_ptr)
-    EFFECT_EDITOR.original_effect_flags = Parser.copy_effect_flags(EFFECT_EDITOR.effect_flags)
-    log(string.format("  Loaded effect flags from memory: 0x%02X", EFFECT_EDITOR.effect_flags.flags_byte))
-
-    -- Parse sound flags from memory (effect_flags section bytes 0x08-0x17)
-    EFFECT_EDITOR.sound_flags = Parser.parse_sound_flags_from_memory(base_addr, EFFECT_EDITOR.header.effect_flags_ptr)
-    EFFECT_EDITOR.original_sound_flags = Parser.copy_sound_flags(EFFECT_EDITOR.sound_flags)
-    log("  Loaded 4 sound config channels from memory")
-
-    -- Parse sound definition (feds section) from memory
-    local sound_section_size = EFFECT_EDITOR.header.texture_ptr - EFFECT_EDITOR.header.sound_def_ptr
-    if sound_section_size > 0 then
-        EFFECT_EDITOR.sound_definition = Parser.parse_sound_definition_from_memory(base_addr, EFFECT_EDITOR.header.sound_def_ptr, sound_section_size)
-        EFFECT_EDITOR.original_sound_definition = Parser.copy_sound_definition(EFFECT_EDITOR.sound_definition)
-        if EFFECT_EDITOR.sound_definition then
-            log(string.format("  Loaded feds section: %d channels, resource_id=%d",
-                EFFECT_EDITOR.sound_definition.num_channels, EFFECT_EDITOR.sound_definition.resource_id))
-        else
-            log("  No valid feds section found")
-        end
-    else
-        EFFECT_EDITOR.sound_definition = nil
-        EFFECT_EDITOR.original_sound_definition = nil
-        log("  No sound definition section (size=0)")
-    end
-
-    -- Store original state for structure change detection
-    EFFECT_EDITOR.original_emitter_count = EFFECT_EDITOR.emitter_count
-    EFFECT_EDITOR.original_header = {
-        anim_table_ptr = EFFECT_EDITOR.header.anim_table_ptr,
-        timing_curve_ptr = EFFECT_EDITOR.header.timing_curve_ptr,
-        effect_flags_ptr = EFFECT_EDITOR.header.effect_flags_ptr,
-        timeline_section_ptr = EFFECT_EDITOR.header.timeline_section_ptr,
-        sound_def_ptr = EFFECT_EDITOR.header.sound_def_ptr,
-        texture_ptr = EFFECT_EDITOR.header.texture_ptr,
-    }
+    parse_all_sections(parsers, log)
 
     EFFECT_EDITOR.file_name = string.format("Memory @ 0x%08X", base_addr)
     EFFECT_EDITOR.status_msg = string.format("Loaded from memory at 0x%08X (%d emitters, %d curves)",
@@ -1042,6 +1039,82 @@ function M.load_from_memory(base_addr)
     print("Effect loaded from memory. Emulator is PAUSED.")
     print("Resume with F5/F6 when ready.")
     print("")
+end
+
+--------------------------------------------------------------------------------
+-- Debug: Dump section boundaries and sizes
+--------------------------------------------------------------------------------
+function M.debug_sections()
+    local base = EFFECT_EDITOR.memory_base
+    local header = EFFECT_EDITOR.header
+
+    if not base or base < 0x80000000 then
+        print("[DEBUG] No valid memory base")
+        return
+    end
+
+    print("=== SECTION BOUNDARIES (Lua header) ===")
+    print(string.format("Base: 0x%08X", base))
+    print("")
+
+    local sections = {
+        {name = "frames",      ptr = header.frames_ptr},
+        {name = "animation",   ptr = header.animation_ptr},
+        {name = "script",      ptr = header.script_data_ptr},
+        {name = "effect_data", ptr = header.effect_data_ptr},
+        {name = "anim_table",  ptr = header.anim_table_ptr},
+        {name = "timing",      ptr = header.timing_curve_ptr},
+        {name = "flags",       ptr = header.effect_flags_ptr},
+        {name = "timeline",    ptr = header.timeline_section_ptr},
+        {name = "sound_def",   ptr = header.sound_def_ptr},
+        {name = "texture",     ptr = header.texture_ptr},
+    }
+
+    for i, sec in ipairs(sections) do
+        local next_ptr = sections[i + 1] and sections[i + 1].ptr or nil
+        local size_str = ""
+        if next_ptr and next_ptr > 0 and sec.ptr > 0 then
+            size_str = string.format(" (size=%d)", next_ptr - sec.ptr)
+        end
+        print(string.format("  %-12s: 0x%04X%s", sec.name, sec.ptr or 0, size_str))
+    end
+
+    -- Check Lua data sizes vs section sizes
+    print("")
+    print("=== LUA DATA SIZES vs SECTION SIZES ===")
+
+    if EFFECT_EDITOR.sequences then
+        local lua_anim_size = Parser.calculate_animation_section_size(EFFECT_EDITOR.sequences)
+        local section_size = header.script_data_ptr - header.animation_ptr
+        local status = lua_anim_size <= section_size and "OK" or "OVERFLOW!"
+        print(string.format("  animation: lua=%d, section=%d [%s]", lua_anim_size, section_size, status))
+    end
+
+    if EFFECT_EDITOR.script_instructions then
+        local lua_script_size = Parser.calculate_script_size(EFFECT_EDITOR.script_instructions)
+        local section_size = header.effect_data_ptr - header.script_data_ptr
+        local status = lua_script_size <= section_size and "OK" or "OVERFLOW!"
+        print(string.format("  script:    lua=%d, section=%d [%s]", lua_script_size, section_size, status))
+    end
+
+    if EFFECT_EDITOR.emitters then
+        local lua_effect_size = 0x14 + #EFFECT_EDITOR.emitters * 0xC4
+        local section_size = header.anim_table_ptr - header.effect_data_ptr
+        local status = lua_effect_size <= section_size and "OK" or "OVERFLOW!"
+        print(string.format("  effect:    lua=%d, section=%d [%s]", lua_effect_size, section_size, status))
+    end
+
+    -- Dump first 16 bytes of effect_data from memory
+    print("")
+    print("=== EFFECT_DATA HEADER (first 20 bytes from memory) ===")
+    local effect_addr = base + header.effect_data_ptr
+    local hex = {}
+    for i = 0, 19 do
+        hex[#hex + 1] = string.format("%02X", MemUtils.read8(effect_addr + i))
+    end
+    print(string.format("  0x%08X: %s", effect_addr, table.concat(hex, " ")))
+    print(string.format("  constant:      0x%04X", MemUtils.read16(effect_addr + 0)))
+    print(string.format("  emitter_count: %d", MemUtils.read16(effect_addr + 2)))
 end
 
 return M

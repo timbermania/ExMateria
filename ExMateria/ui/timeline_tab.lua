@@ -8,11 +8,9 @@ local M = {}
 --------------------------------------------------------------------------------
 
 local helpers = nil
-local apply_all_edits_fn = nil
 
-function M.set_dependencies(helpers_module, apply_all_edits)
+function M.set_dependencies(helpers_module)
     helpers = helpers_module
-    apply_all_edits_fn = apply_all_edits
 end
 
 --------------------------------------------------------------------------------
@@ -290,21 +288,6 @@ function M.draw()
         imgui.TextUnformatted("No timeline data loaded")
         return
     end
-
-    -- Apply to Memory button at top
-    if EFFECT_EDITOR.memory_base >= 0x80000000 then
-        if imgui.Button("Apply All to Memory##timeline") then
-            if apply_all_edits_fn then
-                apply_all_edits_fn()
-            end
-        end
-        imgui.SameLine()
-        imgui.TextUnformatted(string.format("(Target: 0x%08X)", EFFECT_EDITOR.memory_base))
-    else
-        imgui.TextUnformatted("Set memory base address to enable Apply to Memory")
-    end
-
-    imgui.Separator()
 
     -- Particle channels legend
     if imgui.CollapsingHeader("Particle Channels Help") then

@@ -8,14 +8,12 @@ local M = {}
 --------------------------------------------------------------------------------
 
 local helpers = nil
-local apply_all_edits_fn = nil
 local Parser = nil
 local bmp = nil
 local config = nil
 
-function M.set_dependencies(helpers_module, apply_all_edits, parser_module, bmp_module, config_module)
+function M.set_dependencies(helpers_module, parser_module, bmp_module, config_module)
     helpers = helpers_module
-    apply_all_edits_fn = apply_all_edits
     Parser = parser_module
     bmp = bmp_module
     config = config_module
@@ -40,26 +38,6 @@ local ui_state = {
 local SEMI_TRANS_MODES = "Mode 0 (BLEND)\0Mode 1 (ADD)\0Mode 2 (SUB)\0Mode 3 (ADD25)\0"
 local COLOR_DEPTH_ITEMS = "4-bit (16 colors)\0008-bit (256 colors)\0"
 local TPAGE_COLOR_DEPTH_ITEMS = "0: 4-bit\0001: 8-bit\0002: 15-bit\0003: Reserved\0"
-
---------------------------------------------------------------------------------
--- Local Helpers
---------------------------------------------------------------------------------
-
-local function slider_int16(label, value, min, max, width)
-    return helpers.slider_int16(label, value, min, max, width)
-end
-
-local function slider_u8(label, value, min, max, width)
-    if width then imgui.SetNextItemWidth(width) end
-    local c, v = imgui.SliderInt(label, value, min, max)
-    return c, v
-end
-
-local function slider_s8(label, value, min, max, width)
-    if width then imgui.SetNextItemWidth(width) end
-    local c, v = imgui.SliderInt(label, value, min, max)
-    return c, v
-end
 
 --------------------------------------------------------------------------------
 -- Get Currently Selected Frame
@@ -303,26 +281,13 @@ function M.draw()
         return
     end
 
-    -- Apply to Memory button at top
-    if EFFECT_EDITOR.memory_base >= 0x80000000 then
-        if imgui.Button("Apply All to Memory") then
-            if apply_all_edits_fn then
-                apply_all_edits_fn()
-            end
-        end
-        imgui.SameLine()
-        imgui.TextUnformatted(string.format("(Target: 0x%08X)", EFFECT_EDITOR.memory_base))
-    else
-        imgui.TextUnformatted("Set memory base address to enable Apply to Memory")
-    end
-
     -- Structure change warning
     if EFFECT_EDITOR.original_framesets and
        #EFFECT_EDITOR.framesets ~= #EFFECT_EDITOR.original_framesets then
         imgui.Separator()
         imgui.TextUnformatted(string.format("** STRUCTURE MODIFIED: %d -> %d framesets **",
             #EFFECT_EDITOR.original_framesets, #EFFECT_EDITOR.framesets))
-        imgui.TextUnformatted("Click 'Apply All to Memory' to commit changes")
+        imgui.TextUnformatted("Run Test Cycle to apply changes")
     end
 
     imgui.Separator()

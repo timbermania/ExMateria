@@ -131,18 +131,6 @@ function M.apply_structure_changes(base, changes, header, silent)
     local mem_layout = M.read_memory_layout(base)
 
     if not silent then
-        print("[APPLY_STRUCT] === apply_structure_changes ===")
-        print(string.format("[APPLY_STRUCT] base=0x%08X", base))
-        print("[APPLY_STRUCT] Memory layout before shift:")
-        for _, section in ipairs(M.SECTION_SCHEMA) do
-            if mem_layout[section.name] and mem_layout[section.name] ~= 0 then
-                print(string.format("[APPLY_STRUCT]   %s: 0x%X", section.name, mem_layout[section.name]))
-            end
-        end
-        print("[APPLY_STRUCT] Changes requested:")
-        for name, delta in pairs(changes) do
-            print(string.format("[APPLY_STRUCT]   %s: %+d bytes", name, delta))
-        end
         log("Applying structure changes:")
         for name, delta in pairs(changes) do
             log(string.format("  %s: %+d bytes", name, delta))
@@ -158,34 +146,43 @@ function M.apply_structure_changes(base, changes, header, silent)
         if delta and delta ~= 0 then
             made_changes = true
 
-            -- Find the NEXT section's current pointer (this is where we start shifting)
+            local current_ptr = mem_layout[section.name]
+            if not current_ptr or current_ptr == 0 then
+                log("WARNING: Section '" .. section.name .. "' has no valid pointer, skipping shift")
+                goto continue_section
+            end
+
+            -- Find the section with the SMALLEST pointer that's > current_ptr
+            -- This handles cases where sections are in different order in memory vs SECTION_SCHEMA
             local shift_start_ptr = nil
-            for j = i + 1, #M.SECTION_SCHEMA do
-                local next_ptr = mem_layout[M.SECTION_SCHEMA[j].name]
-                if next_ptr and next_ptr ~= 0 then
-                    shift_start_ptr = next_ptr
-                    break
+            for _, other_section in ipairs(M.SECTION_SCHEMA) do
+                local other_ptr = mem_layout[other_section.name]
+                if other_ptr and other_ptr ~= 0 and other_ptr > current_ptr then
+                    if not shift_start_ptr or other_ptr < shift_start_ptr then
+                        shift_start_ptr = other_ptr
+                    end
                 end
             end
 
             if shift_start_ptr then
                 local shift_start = base + shift_start_ptr
-                local shift_end = shift_start + 0x10000  -- 64KB safe margin
+                local shift_end = shift_start + 0x20000  -- 128KB margin for large effects like E066 (82KB)
 
                 log_verbose(string.format("  Section '%s': shifting from 0x%08X by %d",
                     section.name, shift_start, delta))
 
                 M.shift_memory_region(shift_start, shift_end, delta)
 
-                -- Update ALL downstream pointers in mem_layout (for subsequent shifts)
-                for j = i + 1, #M.SECTION_SCHEMA do
-                    local downstream = M.SECTION_SCHEMA[j]
+                -- Update ALL sections whose pointers are >= shift_start_ptr
+                -- This handles memory order correctly regardless of SECTION_SCHEMA order
+                for _, downstream in ipairs(M.SECTION_SCHEMA) do
                     local old_ptr = mem_layout[downstream.name]
-                    if old_ptr and old_ptr ~= 0 then
+                    if old_ptr and old_ptr ~= 0 and old_ptr >= shift_start_ptr then
                         mem_layout[downstream.name] = old_ptr + delta
                     end
                 end
             end
+            ::continue_section::
         end
     end
 
@@ -196,17 +193,16 @@ function M.apply_structure_changes(base, changes, header, silent)
     -- Update header with new pointer values
     -- For optional sections (like timing_curve): only update if memory had a non-zero value
     -- This preserves header values from .bin when memory doesn't have the optional section
-    -- The timing curve handler is responsible for adding/removing optional sections
     for _, section in ipairs(M.SECTION_SCHEMA) do
         local new_ptr = mem_layout[section.name]
-        -- Skip optional sections if their pointer is 0 (not present in memory)
-        -- Note: In Lua, 0 is truthy, so we need explicit != 0 check for optional sections
         local should_update = new_ptr and (not section.optional or new_ptr ~= 0)
         if should_update then
             -- Update Lua header
             local header_field = section.name .. "_ptr"
             if header[header_field] ~= nil then
                 header[header_field] = new_ptr
+            elseif section.name == "script" then
+                header.script_data_ptr = new_ptr
             elseif section.name == "timeline" then
                 header.timeline_section_ptr = new_ptr
             elseif section.name == "anim_table" then
@@ -232,24 +228,7 @@ function M.apply_structure_changes(base, changes, header, silent)
     MemUtils.refresh_mem()
 
     if not silent then
-        print("[APPLY_STRUCT] Memory layout AFTER shift (from mem_layout table):")
-        for _, section in ipairs(M.SECTION_SCHEMA) do
-            if mem_layout[section.name] and mem_layout[section.name] ~= 0 then
-                print(string.format("[APPLY_STRUCT]   %s: 0x%X", section.name, mem_layout[section.name]))
-            end
-        end
-
-        print("[APPLY_STRUCT] Header AFTER update:")
-        print(string.format("[APPLY_STRUCT]   script_data_ptr: 0x%X", header.script_data_ptr or 0))
-        print(string.format("[APPLY_STRUCT]   effect_data_ptr: 0x%X", header.effect_data_ptr or 0))
-        print(string.format("[APPLY_STRUCT]   anim_table_ptr: 0x%X", header.anim_table_ptr or 0))
-
-        log("Structure changes applied. New layout:")
-        for _, section in ipairs(M.SECTION_SCHEMA) do
-            if mem_layout[section.name] ~= 0 then
-                log(string.format("  %s: 0x%X", section.name, mem_layout[section.name]))
-            end
-        end
+        log("Structure changes applied")
     end
 
     return true
@@ -398,11 +377,9 @@ function M.calculate_animation_delta(base, silent)
             lua_size, #EFFECT_EDITOR.sequences))
     end
 
-    -- Store memory section size for padding during write
-    -- This ensures we can pad small gaps instead of shifting memory
-    EFFECT_EDITOR.animation_section_target_size = mem_section_size
-
     if lua_size == mem_section_size then
+        -- No shift needed - use existing memory section size for padding
+        EFFECT_EDITOR.animation_section_target_size = mem_section_size
         if not silent then
             print(string.format("[ANIM_DELTA] MATCH: lua_size=%d == mem_size=%d, delta=0", lua_size, mem_section_size))
         end
@@ -415,6 +392,8 @@ function M.calculate_animation_delta(base, silent)
     -- Instead, we'll pad during write to fill the original section size.
     -- This prevents off-by-one corruptions from propagating through all downstream sections.
     if delta >= -4 and delta < 0 then
+        -- No shift - pad to original memory size
+        EFFECT_EDITOR.animation_section_target_size = mem_section_size
         if not silent then
             print(string.format("[ANIM_DELTA] SMALL PADDING GAP: lua_size=%d, mem_size=%d, delta=%d -> will pad instead of shift",
                 lua_size, mem_section_size, delta))
@@ -422,6 +401,8 @@ function M.calculate_animation_delta(base, silent)
         return 0  -- Don't shift; write_animation_section will pad
     end
 
+    -- Shift happening - target size is now the new aligned lua_size
+    EFFECT_EDITOR.animation_section_target_size = lua_size
     if not silent then
         print(string.format("[ANIM_DELTA] MISMATCH: lua_size=%d, mem_size=%d, delta=%d", lua_size, mem_section_size, delta))
     end
@@ -458,9 +439,10 @@ function M.calculate_frames_delta(base, silent)
         return 0
     end
 
-    local lua_size = Parser.calculate_frames_section_size(EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count)
+    -- Pass the physical offset_table_count to get accurate size (includes null terminator if present)
+    local lua_size = Parser.calculate_frames_section_size(EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count)
     if not silent then
-        print(string.format("[FRAMES_DELTA] Lua section size: %d bytes", lua_size))
+        print(string.format("[FRAMES_DELTA] Lua section size: %d bytes (offset_table_count=%d)", lua_size, EFFECT_EDITOR.frames_offset_table_count or 0))
     end
 
     if lua_size == mem_section_size then

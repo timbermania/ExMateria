@@ -474,6 +474,44 @@ function M.psx_texture_to_rgba_pixels(palette_data, width, height, pixel_data)
     return rgba_pixels
 end
 
+-- Convert PSX "indexed with sub-palette" format (depth_flag=1) to RGBA pixels
+-- This is NOT standard 4bpp! Format: 1 byte = 1 pixel
+--   Low nibble (bits 0-3) = color index within sub-palette (0-15)
+--   High nibble (bits 4-7) = sub-palette selector (0-15)
+-- palette_data: 512 bytes = 16 sub-palettes × 16 colors × 2 bytes per color
+-- width, height: dimensions (in pixels)
+-- pixel_data: raw pixel data (1 byte per pixel)
+-- Returns: table of RGBA pixels
+function M.psx_texture_to_rgba_pixels_4bpp(palette_data, width, height, pixel_data)
+    local rgba_pixels = {}
+
+    for i = 1, #pixel_data do
+        local byte = pixel_data:byte(i)
+        local color_idx = bit.band(byte, 0x0F)      -- bits 0-3: color within sub-palette
+        local sub_palette = bit.rshift(byte, 4)     -- bits 4-7: which sub-palette
+
+        -- Look up color in the correct sub-palette
+        -- Each sub-palette is 32 bytes (16 colors × 2 bytes per color)
+        local offset = sub_palette * 32 + color_idx * 2
+        local lo = palette_data:byte(offset + 1) or 0
+        local hi = palette_data:byte(offset + 2) or 0
+        local color16 = lo + hi * 256
+
+        -- Extract RGB from BGR555
+        local r = bit.band(color16, 0x1F) * 8
+        local g = bit.band(bit.rshift(color16, 5), 0x1F) * 8
+        local b = bit.band(bit.rshift(color16, 10), 0x1F) * 8
+
+        -- Extract STP bit (bit 15) for alpha
+        local stp = bit.band(color16, 0x8000) ~= 0
+        local a = stp and 128 or 255
+
+        rgba_pixels[i] = {r = r, g = g, b = b, a = a}
+    end
+
+    return rgba_pixels
+end
+
 --------------------------------------------------------------------------------
 -- TGA File Reading
 --------------------------------------------------------------------------------

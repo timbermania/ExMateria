@@ -66,6 +66,7 @@ EFFECT_EDITOR = {
     -- Frames/Sprite definitions
     framesets = nil,                    -- Array of frameset structures (each contains frames array)
     frames_group_count = 0,             -- Number of frameset groups
+    frames_offset_table_count = 0,      -- Physical offset table entry count (includes null terminator if present)
     original_framesets = nil,           -- Copy for reset functionality
 
     -- Animation sequences
@@ -159,6 +160,7 @@ function M.reset()
     EFFECT_EDITOR.original_script_instructions = nil
     EFFECT_EDITOR.framesets = nil
     EFFECT_EDITOR.frames_group_count = 0
+    EFFECT_EDITOR.frames_offset_table_count = 0
     EFFECT_EDITOR.original_framesets = nil
     EFFECT_EDITOR.sequences = nil
     EFFECT_EDITOR.sequence_count = 0

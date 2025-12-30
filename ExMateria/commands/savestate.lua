@@ -170,6 +170,14 @@ function M.ee_reload(name, quiet)
 
     if success then
         if not quiet then logging.log(string.format("=== RELOAD '%s' COMPLETE ===", name)) end
+
+        -- Call any registered reload callbacks (e.g., to clear preview mode)
+        if EFFECT_EDITOR.on_reload_callbacks then
+            for _, callback in ipairs(EFFECT_EDITOR.on_reload_callbacks) do
+                pcall(callback)
+            end
+        end
+
         return true
     else
         logging.log_error("Failed to load savestate: " .. tostring(err))

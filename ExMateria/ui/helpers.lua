@@ -12,6 +12,25 @@ M.SLIDER_WIDTH_PAIR = 350       -- For 2 sliders side-by-side
 M.SLIDER_WIDTH_TRIPLE = 230     -- For 3 sliders side-by-side (X/Y/Z)
 
 --------------------------------------------------------------------------------
+-- Nibble Helpers (for byte-packed fields like curve indices)
+--------------------------------------------------------------------------------
+
+-- Extract low nibble (bits 0-3) from byte
+function M.get_low_nibble(byte)
+    return byte % 16
+end
+
+-- Extract high nibble (bits 4-7) from byte
+function M.get_high_nibble(byte)
+    return math.floor(byte / 16)
+end
+
+-- Pack two nibbles into one byte
+function M.pack_nibbles(low, high)
+    return (low % 16) + (high % 16) * 16
+end
+
+--------------------------------------------------------------------------------
 -- Basic Slider Helper
 --------------------------------------------------------------------------------
 
@@ -31,8 +50,8 @@ end
 
 -- Helper to draw a group of 6 sliders for start/end XYZ
 function M.draw_xyz_start_end(label, e, prefix, min_val, max_val)
-    min_val = min_val or -200
-    max_val = max_val or 200
+    min_val = min_val or -500
+    max_val = max_val or 500
     local changed = false
     local c, v
 

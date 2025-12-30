@@ -149,4 +149,34 @@ function M.bytes_to_string(bytes)
     return table.concat(chars)
 end
 
+--------------------------------------------------------------------------------
+-- Unified Reader Abstraction
+-- Allows same parsing code to work with file buffers OR PSX memory
+--------------------------------------------------------------------------------
+
+-- Create a buffer reader (for file data)
+-- All offsets are relative to base_offset
+function M.buffer_reader(data, base_offset)
+    base_offset = base_offset or 0
+    return {
+        source = "buffer",
+        read8 = function(offset) return M.buf_read8(data, base_offset + offset) end,
+        read16 = function(offset) return M.buf_read16(data, base_offset + offset) end,
+        read16s = function(offset) return M.buf_read16s(data, base_offset + offset) end,
+        read32 = function(offset) return M.buf_read32(data, base_offset + offset) end,
+    }
+end
+
+-- Create a memory reader (for PSX RAM)
+-- All offsets are relative to base_addr
+function M.memory_reader(base_addr)
+    return {
+        source = "memory",
+        read8 = function(offset) return M.read8(base_addr + offset) end,
+        read16 = function(offset) return M.read16(base_addr + offset) end,
+        read16s = function(offset) return M.read16s(base_addr + offset) end,
+        read32 = function(offset) return M.read32(base_addr + offset) end,
+    }
+end
+
 return M

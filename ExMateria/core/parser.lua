@@ -43,8 +43,8 @@ M.HEADER_OFFSETS = {
 --------------------------------------------------------------------------------
 
 -- Detect if file is CODE (MIPS executable) or DATA format
-function M.detect_format(data)
-    local first_word = mem.buf_read32(data, 0x00)
+local function detect_format_impl(reader)
+    local first_word = reader.read32(0x00)
 
     -- CODE format: first instruction is addiu sp, sp, -X (0x27BDXXXX)
     if first_word >= 0x27BD0000 and first_word < 0x27BE0000 then
@@ -59,45 +59,47 @@ function M.detect_format(data)
     return "UNKNOWN"
 end
 
+-- Public wrapper for backward compatibility
+function M.detect_format(data)
+    return detect_format_impl(mem.buffer_reader(data, 0))
+end
+
 --------------------------------------------------------------------------------
 -- Header Parsing
 --------------------------------------------------------------------------------
 
+-- Internal unified header parser (10 pointers)
+local function parse_header_impl(reader)
+    return {
+        frames_ptr = reader.read32(0x00),
+        animation_ptr = reader.read32(0x04),
+        script_data_ptr = reader.read32(0x08),
+        effect_data_ptr = reader.read32(0x0C),
+        anim_table_ptr = reader.read32(0x10),
+        timing_curve_ptr = reader.read32(0x14),
+        effect_flags_ptr = reader.read32(0x18),
+        timeline_section_ptr = reader.read32(0x1C),
+        sound_def_ptr = reader.read32(0x20),
+        texture_ptr = reader.read32(0x24),
+    }
+end
+
 -- Parse 40-byte header from file data
 function M.parse_header_from_data(data)
-    return {
-        frames_ptr = mem.buf_read32(data, 0x00),
-        animation_ptr = mem.buf_read32(data, 0x04),
-        script_data_ptr = mem.buf_read32(data, 0x08),
-        effect_data_ptr = mem.buf_read32(data, 0x0C),
-        anim_table_ptr = mem.buf_read32(data, 0x10),
-        timing_curve_ptr = mem.buf_read32(data, 0x14),
-        effect_flags_ptr = mem.buf_read32(data, 0x18),
-        timeline_section_ptr = mem.buf_read32(data, 0x1C),
-        sound_def_ptr = mem.buf_read32(data, 0x20),
-        texture_ptr = mem.buf_read32(data, 0x24),
-        file_size = #data,
-        format = M.detect_format(data),
-        source = "file"
-    }
+    local reader = mem.buffer_reader(data, 0)
+    local header = parse_header_impl(reader)
+    header.file_size = #data
+    header.format = detect_format_impl(reader)
+    header.source = "file"
+    return header
 end
 
 -- Parse header from PSX memory at given base address
 function M.parse_header_from_memory(base_addr)
-    return {
-        frames_ptr = mem.read32(base_addr + 0x00),
-        animation_ptr = mem.read32(base_addr + 0x04),
-        script_data_ptr = mem.read32(base_addr + 0x08),
-        effect_data_ptr = mem.read32(base_addr + 0x0C),
-        anim_table_ptr = mem.read32(base_addr + 0x10),
-        timing_curve_ptr = mem.read32(base_addr + 0x14),
-        effect_flags_ptr = mem.read32(base_addr + 0x18),
-        timeline_section_ptr = mem.read32(base_addr + 0x1C),
-        sound_def_ptr = mem.read32(base_addr + 0x20),
-        texture_ptr = mem.read32(base_addr + 0x24),
-        base_addr = base_addr,
-        source = "memory"
-    }
+    local header = parse_header_impl(mem.memory_reader(base_addr))
+    header.base_addr = base_addr
+    header.source = "memory"
+    return header
 end
 
 --------------------------------------------------------------------------------
@@ -190,44 +192,69 @@ function M.parse_particle_header_from_data(data, offset)
     return FieldSchema.parse_from_buffer(FieldSchema.PARTICLE_HEADER_SCHEMA, data, offset)
 end
 
+function M.parse_particle_header_from_memory(base_addr)
+    return FieldSchema.parse_from_memory(FieldSchema.PARTICLE_HEADER_SCHEMA, base_addr)
+end
+
 --------------------------------------------------------------------------------
--- Emitter Parsing (from file data)
+-- Emitter Parsing (unified using reader abstraction)
 --------------------------------------------------------------------------------
+
+-- Internal unified emitter parser
+local function parse_emitter_impl(reader)
+    return FieldSchema.parse_from_reader(FieldSchema.EMITTER_SCHEMA, reader)
+end
 
 -- Parse single emitter (196 bytes) from file data
 function M.parse_emitter_from_data(data, offset)
-    return FieldSchema.parse_from_buffer(FieldSchema.EMITTER_SCHEMA, data, offset)
+    return parse_emitter_impl(mem.buffer_reader(data, offset))
 end
 
--- Parse all emitters from file data
-function M.parse_all_emitters(data, effect_data_ptr, emitter_count)
+-- Parse single emitter from PSX memory
+function M.parse_emitter_from_memory(base_addr)
+    return parse_emitter_impl(mem.memory_reader(base_addr))
+end
+
+-- Internal unified all-emitters parser
+local function parse_all_emitters_impl(reader, effect_data_offset, emitter_count)
     local emitters = {}
     for i = 0, emitter_count - 1 do
-        local offset = effect_data_ptr + 0x14 + (i * 0xC4)
-        emitters[i + 1] = M.parse_emitter_from_data(data, offset)
+        local offset = effect_data_offset + 0x14 + (i * 0xC4)
+        -- Create a new reader at the emitter offset
+        local emitter_reader = {
+            read8 = function(off) return reader.read8(offset + off) end,
+            read16 = function(off) return reader.read16(offset + off) end,
+            read16s = function(off) return reader.read16s(offset + off) end,
+            read32 = function(off) return reader.read32(offset + off) end,
+        }
+        emitters[i + 1] = parse_emitter_impl(emitter_reader)
         emitters[i + 1].index = i
         emitters[i + 1].offset = offset
     end
     return emitters
 end
 
---------------------------------------------------------------------------------
--- Emitter Parsing (from PSX memory)
---------------------------------------------------------------------------------
-
--- Parse single emitter from PSX memory (not file buffer)
-function M.parse_emitter_from_memory(base_addr)
-    return FieldSchema.parse_from_memory(FieldSchema.EMITTER_SCHEMA, base_addr)
+-- Parse all emitters from file data
+function M.parse_all_emitters(data, effect_data_ptr, emitter_count)
+    return parse_all_emitters_impl(mem.buffer_reader(data, 0), effect_data_ptr, emitter_count)
 end
 
 -- Parse all emitters from PSX memory
 function M.parse_all_emitters_from_memory(effect_data_base, emitter_count)
+    -- For memory, create reader at effect_data_base, use offset 0 as base
+    local reader = mem.memory_reader(effect_data_base)
     local emitters = {}
     for i = 0, emitter_count - 1 do
-        local addr = effect_data_base + 0x14 + (i * 0xC4)
-        emitters[i + 1] = M.parse_emitter_from_memory(addr)
+        local offset = 0x14 + (i * 0xC4)
+        local emitter_reader = {
+            read8 = function(off) return reader.read8(offset + off) end,
+            read16 = function(off) return reader.read16(offset + off) end,
+            read16s = function(off) return reader.read16s(offset + off) end,
+            read32 = function(off) return reader.read32(offset + off) end,
+        }
+        emitters[i + 1] = parse_emitter_impl(emitter_reader)
         emitters[i + 1].index = i
-        emitters[i + 1].offset = addr - effect_data_base
+        emitters[i + 1].offset = offset  -- Relative offset from effect_data_base
     end
     return emitters
 end
@@ -299,21 +326,16 @@ end
 
 local CURVE_LENGTH = 160
 
--- Parse all curves from file data
--- Returns: curves table (1-indexed, each is table of 160 values), curve_count
-function M.parse_curves_from_data(data, anim_table_ptr)
-    if not data or not anim_table_ptr then
-        return {}, 0
-    end
-
-    local curve_count = mem.buf_read32(data, anim_table_ptr)
+-- Internal unified implementation for curves
+local function parse_curves_impl(reader)
+    local curve_count = reader.read32(0)
     local curves = {}
 
     for c = 0, curve_count - 1 do
         local curve = {}
-        local base = anim_table_ptr + 4 + (c * CURVE_LENGTH)
+        local base = 4 + (c * CURVE_LENGTH)
         for i = 0, CURVE_LENGTH - 1 do
-            curve[i + 1] = mem.buf_read8(data, base + i)
+            curve[i + 1] = reader.read8(base + i)
         end
         curves[c + 1] = curve
     end
@@ -321,25 +343,21 @@ function M.parse_curves_from_data(data, anim_table_ptr)
     return curves, curve_count
 end
 
+-- Parse all curves from file data
+-- Returns: curves table (1-indexed, each is table of 160 values), curve_count
+function M.parse_curves_from_data(data, anim_table_ptr)
+    if not data or not anim_table_ptr then
+        return {}, 0
+    end
+    return parse_curves_impl(mem.buffer_reader(data, anim_table_ptr))
+end
+
 -- Parse all curves from PSX memory
 function M.parse_curves_from_memory(anim_table_addr)
     if not anim_table_addr then
         return {}, 0
     end
-
-    local curve_count = mem.read32(anim_table_addr)
-    local curves = {}
-
-    for c = 0, curve_count - 1 do
-        local curve = {}
-        local base = anim_table_addr + 4 + (c * CURVE_LENGTH)
-        for i = 0, CURVE_LENGTH - 1 do
-            curve[i + 1] = mem.read8(base + i)
-        end
-        curves[c + 1] = curve
-    end
-
-    return curves, curve_count
+    return parse_curves_impl(mem.memory_reader(anim_table_addr))
 end
 
 -- Write single curve to PSX memory
@@ -392,174 +410,118 @@ M.TIMELINE_OFFSETS = {
 local CHANNEL_SIZE = 128
 local MAX_KEYFRAMES = 25
 
+-- Internal unified implementation for timeline header
+local function parse_timeline_header_impl(reader)
+    return {
+        unknown_00 = reader.read16s(0x00),
+        unknown_02 = reader.read16s(0x02),
+        phase1_duration = reader.read16s(0x04),
+        spawn_delay = reader.read16s(0x06),
+        unknown_08 = reader.read16s(0x08),
+        phase2_delay = reader.read16s(0x0A),
+    }
+end
+
 -- Parse timeline header (12 bytes at timeline_section_ptr)
 function M.parse_timeline_header_from_data(data, timeline_section_ptr)
-    return {
-        unknown_00 = mem.buf_read16s(data, timeline_section_ptr + 0x00),
-        unknown_02 = mem.buf_read16s(data, timeline_section_ptr + 0x02),
-        phase1_duration = mem.buf_read16s(data, timeline_section_ptr + 0x04),
-        spawn_delay = mem.buf_read16s(data, timeline_section_ptr + 0x06),
-        unknown_08 = mem.buf_read16s(data, timeline_section_ptr + 0x08),
-        phase2_delay = mem.buf_read16s(data, timeline_section_ptr + 0x0A),
-    }
+    return parse_timeline_header_impl(mem.buffer_reader(data, timeline_section_ptr))
 end
 
 function M.parse_timeline_header_from_memory(timeline_section_addr)
-    return {
-        unknown_00 = mem.read16s(timeline_section_addr + 0x00),
-        unknown_02 = mem.read16s(timeline_section_addr + 0x02),
-        phase1_duration = mem.read16s(timeline_section_addr + 0x04),
-        spawn_delay = mem.read16s(timeline_section_addr + 0x06),
-        unknown_08 = mem.read16s(timeline_section_addr + 0x08),
-        phase2_delay = mem.read16s(timeline_section_addr + 0x0A),
-    }
+    return parse_timeline_header_impl(mem.memory_reader(timeline_section_addr))
 end
 
--- Parse single particle channel (128 bytes) from file data
--- Returns channel table with keyframes array
-function M.parse_particle_channel_from_data(data, offset, context, channel_index)
+-- Internal unified particle channel parser (128 bytes)
+local function parse_particle_channel_impl(reader, context, channel_index, base_offset)
     local channel = {
         context = context,           -- "animate_tick", "phase1", or "phase2"
         channel_index = channel_index,
-        offset = offset,
+        offset = base_offset,
         keyframes = {}
     }
 
     -- Read max_keyframe from 0x7E-0x7F
-    channel.max_keyframe = mem.buf_read16s(data, offset + 0x7E)
-
-    -- DEBUG: Log parsing for Channel 1 (animate_tick index 1)
-    local is_channel_1 = (context == "animate_tick" and channel_index == 1)
-    if is_channel_1 then
-        print(string.format("[DEBUG PARSE] Channel 1 @ file offset 0x%X, max_kf=%d",
-            offset, channel.max_keyframe))
-        -- Show raw hex of first 16 bytes
-        local hex = ""
-        for i = 0, 15 do
-            hex = hex .. string.format("%02X ", string.byte(data, offset + 1 + i) or 0)
-        end
-        print(string.format("  Raw hex: %s", hex))
-    end
-
-    -- Parse keyframes (up to max_keyframe + 1, but cap at 25)
-    local num_keyframes = math.min(channel.max_keyframe + 1, MAX_KEYFRAMES)
-
-    for i = 0, MAX_KEYFRAMES - 1 do
-        local kf = {}
-
-        -- time_marker at offset + i*2 (int16)
-        kf.time = mem.buf_read16s(data, offset + (i * 2))
-
-        -- DEBUG: Log first 5 keyframe times for Channel 1
-        if is_channel_1 and i < 5 then
-            print(string.format("  Parsed kf[%d].time = %d from offset 0x%X",
-                i, kf.time, offset + (i * 2)))
-        end
-
-        -- emitter_id at offset + 0x31 + i (byte)
-        -- Note: emitter_ids start at 0x31, but index 0 overlaps with time_marker[24] high byte
-        -- The game increments keyframe index BEFORE reading emitter_id, so we read at i+1 position
-        -- But for parsing, we'll read at the direct offset and handle the overlap
-        if i < MAX_KEYFRAMES then
-            kf.emitter_id = mem.buf_read8(data, offset + 0x31 + i)
-        else
-            kf.emitter_id = 0
-        end
-
-        -- action_flags at offset + 0x4A + i*2 (uint16)
-        kf.action_flags = mem.buf_read16(data, offset + 0x4A + (i * 2))
-
-        channel.keyframes[i + 1] = kf
-    end
-
-    return channel
-end
-
--- Parse single particle channel from PSX memory
-function M.parse_particle_channel_from_memory(addr, context, channel_index)
-    local channel = {
-        context = context,
-        channel_index = channel_index,
-        offset = addr,  -- This is the memory address
-        keyframes = {}
-    }
-
-    -- Read max_keyframe from 0x7E-0x7F
-    channel.max_keyframe = mem.read16s(addr + 0x7E)
+    channel.max_keyframe = reader.read16s(0x7E)
 
     -- Parse all 25 keyframes
     for i = 0, MAX_KEYFRAMES - 1 do
         local kf = {}
-
-        -- time_marker at offset + i*2 (int16)
-        kf.time = mem.read16s(addr + (i * 2))
-
-        -- emitter_id at offset + 0x31 + i (byte)
-        kf.emitter_id = mem.read8(addr + 0x31 + i)
-
-        -- action_flags at offset + 0x4A + i*2 (uint16)
-        kf.action_flags = mem.read16(addr + 0x4A + (i * 2))
-
+        -- time_marker at i*2 (int16)
+        kf.time = reader.read16s(i * 2)
+        -- emitter_id at 0x31 + i (byte)
+        kf.emitter_id = reader.read8(0x31 + i)
+        -- action_flags at 0x4A + i*2 (uint16)
+        kf.action_flags = reader.read16(0x4A + (i * 2))
         channel.keyframes[i + 1] = kf
     end
 
     return channel
 end
 
--- Parse all 15 timeline particle channels from file data
-function M.parse_all_timeline_channels(data, timeline_section_ptr)
+-- Parse single particle channel (128 bytes) from file data
+function M.parse_particle_channel_from_data(data, offset, context, channel_index)
+    return parse_particle_channel_impl(mem.buffer_reader(data, offset), context, channel_index, offset)
+end
+
+-- Parse single particle channel from PSX memory
+function M.parse_particle_channel_from_memory(addr, context, channel_index)
+    return parse_particle_channel_impl(mem.memory_reader(addr), context, channel_index, addr)
+end
+
+-- Internal unified all-timeline-channels parser
+local function parse_all_timeline_channels_impl(reader, timeline_section_offset)
     local channels = {}
     local offsets = M.TIMELINE_OFFSETS
 
-    -- Animate tick channels (5 channels)
-    -- Base is timeline_section_ptr + 8, then add channel offset
-    local animate_tick_base = timeline_section_ptr + 8
+    -- Animate tick channels (5 channels) - base is timeline_section + 8
+    local animate_tick_base = timeline_section_offset + 8
     for i, channel_offset in ipairs(offsets.animate_tick) do
         local offset = animate_tick_base + channel_offset
-        channels[#channels + 1] = M.parse_particle_channel_from_data(data, offset, "animate_tick", i - 1)
+        local ch_reader = {
+            read8 = function(off) return reader.read8(offset + off) end,
+            read16 = function(off) return reader.read16(offset + off) end,
+            read16s = function(off) return reader.read16s(offset + off) end,
+            read32 = function(off) return reader.read32(offset + off) end,
+        }
+        channels[#channels + 1] = parse_particle_channel_impl(ch_reader, "animate_tick", i - 1, offset)
     end
 
     -- Phase 1 channels (5 channels)
     for i, channel_offset in ipairs(offsets.phase1) do
-        local offset = timeline_section_ptr + channel_offset
-        channels[#channels + 1] = M.parse_particle_channel_from_data(data, offset, "phase1", i - 1)
+        local offset = timeline_section_offset + channel_offset
+        local ch_reader = {
+            read8 = function(off) return reader.read8(offset + off) end,
+            read16 = function(off) return reader.read16(offset + off) end,
+            read16s = function(off) return reader.read16s(offset + off) end,
+            read32 = function(off) return reader.read32(offset + off) end,
+        }
+        channels[#channels + 1] = parse_particle_channel_impl(ch_reader, "phase1", i - 1, offset)
     end
 
     -- Phase 2 channels (5 channels)
     for i, channel_offset in ipairs(offsets.phase2) do
-        local offset = timeline_section_ptr + channel_offset
-        channels[#channels + 1] = M.parse_particle_channel_from_data(data, offset, "phase2", i - 1)
+        local offset = timeline_section_offset + channel_offset
+        local ch_reader = {
+            read8 = function(off) return reader.read8(offset + off) end,
+            read16 = function(off) return reader.read16(offset + off) end,
+            read16s = function(off) return reader.read16s(offset + off) end,
+            read32 = function(off) return reader.read32(offset + off) end,
+        }
+        channels[#channels + 1] = parse_particle_channel_impl(ch_reader, "phase2", i - 1, offset)
     end
 
     return channels
 end
 
+-- Parse all 15 timeline particle channels from file data
+function M.parse_all_timeline_channels(data, timeline_section_ptr)
+    return parse_all_timeline_channels_impl(mem.buffer_reader(data, 0), timeline_section_ptr)
+end
+
 -- Parse all 15 timeline particle channels from PSX memory
 function M.parse_all_timeline_channels_from_memory(base_addr, timeline_section_ptr)
-    local channels = {}
-    local offsets = M.TIMELINE_OFFSETS
-    local timeline_addr = base_addr + timeline_section_ptr
-
-    -- Animate tick channels (5 channels)
-    local animate_tick_base = timeline_addr + 8
-    for i, channel_offset in ipairs(offsets.animate_tick) do
-        local addr = animate_tick_base + channel_offset
-        channels[#channels + 1] = M.parse_particle_channel_from_memory(addr, "animate_tick", i - 1)
-    end
-
-    -- Phase 1 channels (5 channels)
-    for i, channel_offset in ipairs(offsets.phase1) do
-        local addr = timeline_addr + channel_offset
-        channels[#channels + 1] = M.parse_particle_channel_from_memory(addr, "phase1", i - 1)
-    end
-
-    -- Phase 2 channels (5 channels)
-    for i, channel_offset in ipairs(offsets.phase2) do
-        local addr = timeline_addr + channel_offset
-        channels[#channels + 1] = M.parse_particle_channel_from_memory(addr, "phase2", i - 1)
-    end
-
-    return channels
+    -- Create a reader at base_addr, pass timeline_section_ptr as the offset
+    return parse_all_timeline_channels_impl(mem.memory_reader(base_addr), timeline_section_ptr)
 end
 
 -- Write timeline header to PSX memory
@@ -727,73 +689,43 @@ M.CAMERA_TABLE_OFFSETS = {
 
 local MAX_CAMERA_KEYFRAMES = 17
 
--- Parse single camera table from file data
-function M.parse_camera_table_from_data(data, timeline_section_ptr, table_index)
-    local offsets = M.CAMERA_TABLE_OFFSETS[table_index]
-    if not offsets then return nil end
-
+-- Internal unified camera table parser
+local function parse_camera_table_impl(reader, offsets, table_index)
     local table_data = {
         table_index = table_index - 1,  -- 0-indexed for display
-        max_keyframe = mem.buf_read16s(data, timeline_section_ptr + offsets.max_keyframe),
+        max_keyframe = reader.read16s(offsets.max_keyframe),
         keyframes = {}
     }
 
     for i = 0, MAX_CAMERA_KEYFRAMES - 1 do
         local kf = {}
-
-        -- end_frame at offset + i*2 (int16)
-        kf.end_frame = mem.buf_read16s(data, timeline_section_ptr + offsets.end_frame + i * 2)
-
-        -- angles at offset + i*6 (3 x int16: pitch, yaw, roll)
-        kf.pitch = mem.buf_read16s(data, timeline_section_ptr + offsets.angles + i * 6)
-        kf.yaw = mem.buf_read16s(data, timeline_section_ptr + offsets.angles + i * 6 + 2)
-        kf.roll = mem.buf_read16s(data, timeline_section_ptr + offsets.angles + i * 6 + 4)
-
-        -- position at offset + i*6 (3 x int16: X, Y, Z)
-        kf.pos_x = mem.buf_read16s(data, timeline_section_ptr + offsets.position + i * 6)
-        kf.pos_y = mem.buf_read16s(data, timeline_section_ptr + offsets.position + i * 6 + 2)
-        kf.pos_z = mem.buf_read16s(data, timeline_section_ptr + offsets.position + i * 6 + 4)
-
-        -- zoom at offset + i*6 (first int16 is zoom, other 2 are padding/unused)
-        kf.zoom = mem.buf_read16s(data, timeline_section_ptr + offsets.zoom + i * 6)
-
-        -- command at offset + i*2 (uint16)
-        kf.command = mem.buf_read16(data, timeline_section_ptr + offsets.command + i * 2)
-
+        kf.end_frame = reader.read16s(offsets.end_frame + i * 2)
+        kf.pitch = reader.read16s(offsets.angles + i * 6)
+        kf.yaw = reader.read16s(offsets.angles + i * 6 + 2)
+        kf.roll = reader.read16s(offsets.angles + i * 6 + 4)
+        kf.pos_x = reader.read16s(offsets.position + i * 6)
+        kf.pos_y = reader.read16s(offsets.position + i * 6 + 2)
+        kf.pos_z = reader.read16s(offsets.position + i * 6 + 4)
+        kf.zoom = reader.read16s(offsets.zoom + i * 6)
+        kf.command = reader.read16(offsets.command + i * 2)
         table_data.keyframes[i + 1] = kf
     end
 
     return table_data
 end
 
+-- Parse single camera table from file data
+function M.parse_camera_table_from_data(data, timeline_section_ptr, table_index)
+    local offsets = M.CAMERA_TABLE_OFFSETS[table_index]
+    if not offsets then return nil end
+    return parse_camera_table_impl(mem.buffer_reader(data, timeline_section_ptr), offsets, table_index)
+end
+
 -- Parse single camera table from PSX memory
 function M.parse_camera_table_from_memory(timeline_addr, table_index)
     local offsets = M.CAMERA_TABLE_OFFSETS[table_index]
     if not offsets then return nil end
-
-    local table_data = {
-        table_index = table_index - 1,
-        max_keyframe = mem.read16s(timeline_addr + offsets.max_keyframe),
-        keyframes = {}
-    }
-
-    for i = 0, MAX_CAMERA_KEYFRAMES - 1 do
-        local kf = {}
-
-        kf.end_frame = mem.read16s(timeline_addr + offsets.end_frame + i * 2)
-        kf.pitch = mem.read16s(timeline_addr + offsets.angles + i * 6)
-        kf.yaw = mem.read16s(timeline_addr + offsets.angles + i * 6 + 2)
-        kf.roll = mem.read16s(timeline_addr + offsets.angles + i * 6 + 4)
-        kf.pos_x = mem.read16s(timeline_addr + offsets.position + i * 6)
-        kf.pos_y = mem.read16s(timeline_addr + offsets.position + i * 6 + 2)
-        kf.pos_z = mem.read16s(timeline_addr + offsets.position + i * 6 + 4)
-        kf.zoom = mem.read16s(timeline_addr + offsets.zoom + i * 6)
-        kf.command = mem.read16(timeline_addr + offsets.command + i * 2)
-
-        table_data.keyframes[i + 1] = kf
-    end
-
-    return table_data
+    return parse_camera_table_impl(mem.memory_reader(timeline_addr), offsets, table_index)
 end
 
 -- Parse all 3 camera tables from file data
@@ -916,10 +848,9 @@ M.COLOR_TRACK_OFFSETS = {
 
 local MAX_COLOR_KEYFRAMES = 33
 
--- Parse single palette track (tracks 0-2) from file data
--- Palette track: 198 bytes (time_values[33] + rgb_triplets[33] + ctrl_flags[33])
--- For phase1/phase2, max_keyframe is at the END of the track (offset 198)
-local function parse_palette_track_from_data(data, offset, context, track_index, max_kf_offset)
+-- Internal unified palette track parser (198 bytes)
+-- max_kf_offset: offset relative to reader base for max_keyframe (nil = use track end offset 198)
+local function parse_palette_track_impl(reader, context, track_index, max_kf_offset)
     local track = {
         context = context,
         track_index = track_index - 1,  -- 0-indexed for display
@@ -928,113 +859,25 @@ local function parse_palette_track_from_data(data, offset, context, track_index,
     }
 
     -- Read max_keyframe
-    if max_kf_offset then
-        -- animate_tick: max_keyframe stored at separate offset
-        track.max_keyframe = mem.buf_read16s(data, max_kf_offset)
-    else
-        -- phase1/phase2: max_keyframe at offset + 198 (end of 198-byte track)
-        track.max_keyframe = mem.buf_read16s(data, offset + 198)
-    end
+    track.max_keyframe = reader.read16s(max_kf_offset or 198)
 
     -- Parse all 33 keyframes
     for i = 0, MAX_COLOR_KEYFRAMES - 1 do
         local kf = {}
-
-        -- time_value at offset + i*2 (int16)
-        kf.time = mem.buf_read16s(data, offset + (i * 2))
-
-        -- RGB at offset + 0x42 + i*3 (interleaved triplets)
-        kf.r = mem.buf_read8(data, offset + 0x42 + (i * 3))
-        kf.g = mem.buf_read8(data, offset + 0x43 + (i * 3))
-        kf.b = mem.buf_read8(data, offset + 0x44 + (i * 3))
-
-        -- ctrl_flags at offset + 0xA5 + i (byte)
-        kf.ctrl = mem.buf_read8(data, offset + 0xA5 + i)
-
+        kf.time = reader.read16s(i * 2)
+        kf.r = reader.read8(0x42 + (i * 3))
+        kf.g = reader.read8(0x43 + (i * 3))
+        kf.b = reader.read8(0x44 + (i * 3))
+        kf.ctrl = reader.read8(0xA5 + i)
         track.keyframes[i + 1] = kf
     end
 
     return track
 end
 
--- Parse single screen track (track 3) from file data
--- Screen track: 298 bytes (time_values[33] + start_rgb[33] + end_rgb[33] + ctrl_flags[33])
--- For phase1/phase2, max_keyframe is at the END of the track (offset 298)
-local function parse_screen_track_from_data(data, offset, context, track_index, max_kf_offset)
-    local track = {
-        context = context,
-        track_index = track_index - 1,  -- 0-indexed for display
-        track_type = "screen",
-        keyframes = {}
-    }
-
-    -- Read max_keyframe
-    if max_kf_offset then
-        -- animate_tick: max_keyframe stored at separate offset
-        track.max_keyframe = mem.buf_read16s(data, max_kf_offset)
-    else
-        -- phase1/phase2: max_keyframe at offset + 298 (end of 298-byte track)
-        track.max_keyframe = mem.buf_read16s(data, offset + 298)
-    end
-
-    -- Parse all 33 keyframes
-    for i = 0, MAX_COLOR_KEYFRAMES - 1 do
-        local kf = {}
-
-        -- time_value at offset + i*2 (int16)
-        kf.time = mem.buf_read16s(data, offset + (i * 2))
-
-        -- start_rgb at offset + 0x42 + i*3 (interleaved triplets)
-        kf.r = mem.buf_read8(data, offset + 0x42 + (i * 3))
-        kf.g = mem.buf_read8(data, offset + 0x43 + (i * 3))
-        kf.b = mem.buf_read8(data, offset + 0x44 + (i * 3))
-
-        -- end_rgb at offset + 0xA5 + i*3 (interleaved triplets)
-        kf.end_r = mem.buf_read8(data, offset + 0xA5 + (i * 3))
-        kf.end_g = mem.buf_read8(data, offset + 0xA6 + (i * 3))
-        kf.end_b = mem.buf_read8(data, offset + 0xA7 + (i * 3))
-
-        -- ctrl_flags at offset + 0x108 + i (byte)
-        kf.ctrl = mem.buf_read8(data, offset + 0x108 + i)
-
-        track.keyframes[i + 1] = kf
-    end
-
-    return track
-end
-
--- Parse single palette track from PSX memory
-local function parse_palette_track_from_memory(addr, context, track_index, max_kf_addr)
-    local track = {
-        context = context,
-        track_index = track_index - 1,
-        track_type = "palette",
-        keyframes = {}
-    }
-
-    -- Read max_keyframe
-    if max_kf_addr then
-        track.max_keyframe = mem.read16s(max_kf_addr)
-    else
-        track.max_keyframe = mem.read16s(addr + 198)
-    end
-
-    -- Parse all 33 keyframes
-    for i = 0, MAX_COLOR_KEYFRAMES - 1 do
-        local kf = {}
-        kf.time = mem.read16s(addr + (i * 2))
-        kf.r = mem.read8(addr + 0x42 + (i * 3))
-        kf.g = mem.read8(addr + 0x43 + (i * 3))
-        kf.b = mem.read8(addr + 0x44 + (i * 3))
-        kf.ctrl = mem.read8(addr + 0xA5 + i)
-        track.keyframes[i + 1] = kf
-    end
-
-    return track
-end
-
--- Parse single screen track from PSX memory
-local function parse_screen_track_from_memory(addr, context, track_index, max_kf_addr)
+-- Internal unified screen track parser (298 bytes)
+-- max_kf_offset: offset relative to reader base for max_keyframe (nil = use track end offset 298)
+local function parse_screen_track_impl(reader, context, track_index, max_kf_offset)
     local track = {
         context = context,
         track_index = track_index - 1,
@@ -1043,120 +886,113 @@ local function parse_screen_track_from_memory(addr, context, track_index, max_kf
     }
 
     -- Read max_keyframe
-    if max_kf_addr then
-        track.max_keyframe = mem.read16s(max_kf_addr)
-    else
-        track.max_keyframe = mem.read16s(addr + 298)
-    end
+    track.max_keyframe = reader.read16s(max_kf_offset or 298)
 
     -- Parse all 33 keyframes
     for i = 0, MAX_COLOR_KEYFRAMES - 1 do
         local kf = {}
-        kf.time = mem.read16s(addr + (i * 2))
-        kf.r = mem.read8(addr + 0x42 + (i * 3))
-        kf.g = mem.read8(addr + 0x43 + (i * 3))
-        kf.b = mem.read8(addr + 0x44 + (i * 3))
-        kf.end_r = mem.read8(addr + 0xA5 + (i * 3))
-        kf.end_g = mem.read8(addr + 0xA6 + (i * 3))
-        kf.end_b = mem.read8(addr + 0xA7 + (i * 3))
-        kf.ctrl = mem.read8(addr + 0x108 + i)
+        kf.time = reader.read16s(i * 2)
+        kf.r = reader.read8(0x42 + (i * 3))
+        kf.g = reader.read8(0x43 + (i * 3))
+        kf.b = reader.read8(0x44 + (i * 3))
+        kf.end_r = reader.read8(0xA5 + (i * 3))
+        kf.end_g = reader.read8(0xA6 + (i * 3))
+        kf.end_b = reader.read8(0xA7 + (i * 3))
+        kf.ctrl = reader.read8(0x108 + i)
         track.keyframes[i + 1] = kf
     end
 
     return track
 end
 
--- Parse all 12 color tracks from file data (4 tracks x 3 contexts)
-function M.parse_all_color_tracks(data, timeline_section_ptr)
+-- Internal unified all-color-tracks parser
+local function parse_all_color_tracks_impl(reader, timeline_section_offset)
     local tracks = {}
     local offsets = M.COLOR_TRACK_OFFSETS
-    local timeline_channel_base = timeline_section_ptr + 8
+    local timeline_channel_base = timeline_section_offset + 8
+
+    -- Helper to create a track reader at an offset
+    local function make_track_reader(offset)
+        return {
+            read8 = function(off) return reader.read8(offset + off) end,
+            read16 = function(off) return reader.read16(offset + off) end,
+            read16s = function(off) return reader.read16s(offset + off) end,
+            read32 = function(off) return reader.read32(offset + off) end,
+        }
+    end
 
     -- animate_tick tracks (base is timeline_channel_base)
     for i = 1, 4 do
         local track_offsets = offsets.animate_tick[i]
         local data_offset = timeline_channel_base + track_offsets.data
-        local max_kf_offset = timeline_channel_base + track_offsets.max_keyframe
+        local max_kf_rel = track_offsets.max_keyframe - track_offsets.data  -- relative to track data
 
+        local track_reader = make_track_reader(data_offset)
         if track_offsets.track_type == "palette" then
-            tracks[#tracks + 1] = parse_palette_track_from_data(data, data_offset, "animate_tick", i, max_kf_offset)
+            tracks[#tracks + 1] = parse_palette_track_impl(track_reader, "animate_tick", i, max_kf_rel)
         else
-            tracks[#tracks + 1] = parse_screen_track_from_data(data, data_offset, "animate_tick", i, max_kf_offset)
+            tracks[#tracks + 1] = parse_screen_track_impl(track_reader, "animate_tick", i, max_kf_rel)
         end
     end
 
-    -- phase1 tracks (base is timeline_section_ptr)
+    -- phase1 tracks (base is timeline_section_offset, max_kf at end of track)
     for i = 1, 4 do
         local track_offsets = offsets.phase1[i]
-        local data_offset = timeline_section_ptr + track_offsets.data
+        local data_offset = timeline_section_offset + track_offsets.data
 
+        local track_reader = make_track_reader(data_offset)
         if track_offsets.track_type == "palette" then
-            tracks[#tracks + 1] = parse_palette_track_from_data(data, data_offset, "phase1", i, nil)
+            tracks[#tracks + 1] = parse_palette_track_impl(track_reader, "phase1", i, nil)
         else
-            tracks[#tracks + 1] = parse_screen_track_from_data(data, data_offset, "phase1", i, nil)
+            tracks[#tracks + 1] = parse_screen_track_impl(track_reader, "phase1", i, nil)
         end
     end
 
-    -- phase2 tracks (base is timeline_section_ptr)
+    -- phase2 tracks (base is timeline_section_offset, max_kf at end of track)
     for i = 1, 4 do
         local track_offsets = offsets.phase2[i]
-        local data_offset = timeline_section_ptr + track_offsets.data
+        local data_offset = timeline_section_offset + track_offsets.data
 
+        local track_reader = make_track_reader(data_offset)
         if track_offsets.track_type == "palette" then
-            tracks[#tracks + 1] = parse_palette_track_from_data(data, data_offset, "phase2", i, nil)
+            tracks[#tracks + 1] = parse_palette_track_impl(track_reader, "phase2", i, nil)
         else
-            tracks[#tracks + 1] = parse_screen_track_from_data(data, data_offset, "phase2", i, nil)
+            tracks[#tracks + 1] = parse_screen_track_impl(track_reader, "phase2", i, nil)
         end
     end
 
     return tracks
 end
 
+-- Parse all 12 color tracks from file data (4 tracks x 3 contexts)
+function M.parse_all_color_tracks(data, timeline_section_ptr)
+    return parse_all_color_tracks_impl(mem.buffer_reader(data, 0), timeline_section_ptr)
+end
+
 -- Parse all 12 color tracks from PSX memory
 function M.parse_all_color_tracks_from_memory(base_addr, timeline_section_ptr)
-    local tracks = {}
-    local offsets = M.COLOR_TRACK_OFFSETS
-    local timeline_addr = base_addr + timeline_section_ptr
-    local timeline_channel_base = timeline_addr + 8
+    return parse_all_color_tracks_impl(mem.memory_reader(base_addr), timeline_section_ptr)
+end
 
-    -- animate_tick tracks
-    for i = 1, 4 do
-        local track_offsets = offsets.animate_tick[i]
-        local data_addr = timeline_channel_base + track_offsets.data
-        local max_kf_addr = timeline_channel_base + track_offsets.max_keyframe
+-- Legacy compatibility wrappers (kept for any direct usage)
+local function parse_palette_track_from_data(data, offset, context, track_index, max_kf_offset)
+    local max_kf_rel = max_kf_offset and (max_kf_offset - offset) or nil
+    return parse_palette_track_impl(mem.buffer_reader(data, offset), context, track_index, max_kf_rel)
+end
 
-        if track_offsets.track_type == "palette" then
-            tracks[#tracks + 1] = parse_palette_track_from_memory(data_addr, "animate_tick", i, max_kf_addr)
-        else
-            tracks[#tracks + 1] = parse_screen_track_from_memory(data_addr, "animate_tick", i, max_kf_addr)
-        end
-    end
+local function parse_screen_track_from_data(data, offset, context, track_index, max_kf_offset)
+    local max_kf_rel = max_kf_offset and (max_kf_offset - offset) or nil
+    return parse_screen_track_impl(mem.buffer_reader(data, offset), context, track_index, max_kf_rel)
+end
 
-    -- phase1 tracks
-    for i = 1, 4 do
-        local track_offsets = offsets.phase1[i]
-        local data_addr = timeline_addr + track_offsets.data
+local function parse_palette_track_from_memory(addr, context, track_index, max_kf_addr)
+    local max_kf_rel = max_kf_addr and (max_kf_addr - addr) or nil
+    return parse_palette_track_impl(mem.memory_reader(addr), context, track_index, max_kf_rel)
+end
 
-        if track_offsets.track_type == "palette" then
-            tracks[#tracks + 1] = parse_palette_track_from_memory(data_addr, "phase1", i, nil)
-        else
-            tracks[#tracks + 1] = parse_screen_track_from_memory(data_addr, "phase1", i, nil)
-        end
-    end
-
-    -- phase2 tracks
-    for i = 1, 4 do
-        local track_offsets = offsets.phase2[i]
-        local data_addr = timeline_addr + track_offsets.data
-
-        if track_offsets.track_type == "palette" then
-            tracks[#tracks + 1] = parse_palette_track_from_memory(data_addr, "phase2", i, nil)
-        else
-            tracks[#tracks + 1] = parse_screen_track_from_memory(data_addr, "phase2", i, nil)
-        end
-    end
-
-    return tracks
+local function parse_screen_track_from_memory(addr, context, track_index, max_kf_addr)
+    local max_kf_rel = max_kf_addr and (max_kf_addr - addr) or nil
+    return parse_screen_track_impl(mem.memory_reader(addr), context, track_index, max_kf_rel)
 end
 
 -- Write single palette track to PSX memory
@@ -1341,23 +1177,18 @@ function M.pack_nibbles(values)
     return packed
 end
 
--- Parse timing curves from file data
--- Returns nil if timing_curve_ptr is 0 (no timing curves)
-function M.parse_timing_curves_from_data(data, timing_curve_ptr)
-    if not data or timing_curve_ptr == 0 then
-        return nil
-    end
-
+-- Internal unified implementation for timing curves
+local function parse_timing_curves_impl(reader)
     -- Read process_timeline region (bytes 0-299)
     local pt_bytes = {}
     for i = 0, TIME_SCALE_BYTE_COUNT - 1 do
-        pt_bytes[i + 1] = mem.buf_read8(data, timing_curve_ptr + i)
+        pt_bytes[i + 1] = reader.read8(i)
     end
 
     -- Read animate_tick region (bytes 300-599)
     local at_bytes = {}
     for i = 0, TIME_SCALE_BYTE_COUNT - 1 do
-        at_bytes[i + 1] = mem.buf_read8(data, timing_curve_ptr + ANIMATE_TICK_BYTE_OFFSET + i)
+        at_bytes[i + 1] = reader.read8(ANIMATE_TICK_BYTE_OFFSET + i)
     end
 
     return {
@@ -1366,30 +1197,21 @@ function M.parse_timing_curves_from_data(data, timing_curve_ptr)
     }
 end
 
+-- Parse timing curves from file data
+-- Returns nil if timing_curve_ptr is 0 (no timing curves)
+function M.parse_timing_curves_from_data(data, timing_curve_ptr)
+    if not data or timing_curve_ptr == 0 then
+        return nil
+    end
+    return parse_timing_curves_impl(mem.buffer_reader(data, timing_curve_ptr))
+end
+
 -- Parse timing curves from PSX memory
 function M.parse_timing_curves_from_memory(base_addr, timing_curve_ptr)
     if timing_curve_ptr == 0 then
         return nil
     end
-
-    local addr = base_addr + timing_curve_ptr
-
-    -- Read process_timeline region
-    local pt_bytes = {}
-    for i = 0, TIME_SCALE_BYTE_COUNT - 1 do
-        pt_bytes[i + 1] = mem.read8(addr + i)
-    end
-
-    -- Read animate_tick region
-    local at_bytes = {}
-    for i = 0, TIME_SCALE_BYTE_COUNT - 1 do
-        at_bytes[i + 1] = mem.read8(addr + ANIMATE_TICK_BYTE_OFFSET + i)
-    end
-
-    return {
-        process_timeline = M.unpack_nibbles(pt_bytes),
-        animate_tick = M.unpack_nibbles(at_bytes)
-    }
+    return parse_timing_curves_impl(mem.memory_reader(base_addr + timing_curve_ptr))
 end
 
 -- Write timing curves to PSX memory
@@ -1432,21 +1254,24 @@ end
 -- First byte (offset 0x00) contains behavior flags including timing curve enables
 --------------------------------------------------------------------------------
 
+-- Internal unified implementation using reader abstraction
+local function parse_effect_flags_impl(reader, offset)
+    return {
+        flags_byte = reader.read8(offset)
+    }
+end
+
 -- Parse effect flags from file data
 function M.parse_effect_flags_from_data(data, effect_flags_ptr)
     if not data or not effect_flags_ptr then
         return nil
     end
-    return {
-        flags_byte = mem.buf_read8(data, effect_flags_ptr)
-    }
+    return parse_effect_flags_impl(mem.buffer_reader(data), effect_flags_ptr)
 end
 
 -- Parse effect flags from PSX memory
 function M.parse_effect_flags_from_memory(base_addr, effect_flags_ptr)
-    return {
-        flags_byte = mem.read8(base_addr + effect_flags_ptr)
-    }
+    return parse_effect_flags_impl(mem.memory_reader(base_addr), effect_flags_ptr)
 end
 
 -- Write effect flags to PSX memory (only flags_byte for now)
@@ -1523,22 +1348,20 @@ function M.get_script_opcode_info(opcode_id)
     return M.SCRIPT_OPCODES[opcode_id] or {name = string.format("unknown_%02X", opcode_id), size = 2, params = {}}
 end
 
--- Parse script instructions from file data buffer
--- Returns array of instruction objects
-function M.parse_script_from_data(data, script_ptr, section_size)
+-- Internal unified script parser
+local function parse_script_impl(reader, section_size)
     local instructions = {}
     local offset = 0
 
     while offset < section_size do
-        -- Read opcode word (2 bytes) - always safe if offset < section_size
-        local opcode_word = mem.buf_read16(data, script_ptr + offset)
+        -- Read opcode word (2 bytes)
+        local opcode_word = reader.read16(offset)
         local opcode_id = opcode_word % 512  -- bits 0-8 (0x1FF mask)
         local flags = math.floor(opcode_word / 512)  -- bits 9-15
 
         local info = M.get_script_opcode_info(opcode_id)
 
         -- CRITICAL: Check if full instruction fits within section bounds
-        -- If not, the opcode word we read is actually from the next section
         if offset + info.size > section_size then
             break
         end
@@ -1556,7 +1379,7 @@ function M.parse_script_from_data(data, script_ptr, section_size)
         -- Parse parameters based on size and param definitions
         local param_offset = 2  -- Start after opcode word
         for i, param_def in ipairs(info.params) do
-            local val = mem.buf_read16s(data, script_ptr + offset + param_offset)
+            local val = reader.read16s(offset + param_offset)
             inst.params[param_def.name] = val
             param_offset = param_offset + 2
         end
@@ -1573,62 +1396,27 @@ function M.parse_script_from_data(data, script_ptr, section_size)
     return instructions
 end
 
+-- Parse script instructions from file data buffer
+function M.parse_script_from_data(data, script_ptr, section_size)
+    return parse_script_impl(mem.buffer_reader(data, script_ptr), section_size)
+end
+
 -- Parse script instructions from PSX memory
 function M.parse_script_from_memory(base_addr, script_ptr, section_size)
-    local instructions = {}
-    local offset = 0
-    local addr = base_addr + script_ptr
-
-    while offset < section_size do
-        -- Read opcode word (2 bytes)
-        local opcode_word = mem.read16(addr + offset)
-        local opcode_id = opcode_word % 512  -- bits 0-8
-        local flags = math.floor(opcode_word / 512)  -- bits 9-15
-
-        local info = M.get_script_opcode_info(opcode_id)
-
-        -- CRITICAL: Check if full instruction fits within section bounds
-        if offset + info.size > section_size then
-            break
-        end
-
-        local inst = {
-            offset = offset,
-            opcode_id = opcode_id,
-            opcode_word = opcode_word,
-            flags = flags,
-            name = info.name,
-            size = info.size,
-            params = {}
-        }
-
-        -- Parse parameters
-        local param_offset = 2
-        for i, param_def in ipairs(info.params) do
-            local val = mem.read16s(addr + offset + param_offset)
-            inst.params[param_def.name] = val
-            param_offset = param_offset + 2
-        end
-
-        table.insert(instructions, inst)
-        offset = offset + info.size
-
-        if info.size == 0 then
-            break
-        end
-    end
-
-    return instructions
+    return parse_script_impl(mem.memory_reader(base_addr + script_ptr), section_size)
 end
 
 -- Calculate total byte size of script instructions
+-- NOTE: Returns 4-byte aligned size to ensure downstream pointers stay aligned
 function M.calculate_script_size(instructions)
     local size = 0
     for _, inst in ipairs(instructions) do
         local info = M.SCRIPT_OPCODES[inst.opcode_id] or {size = 2}
         size = size + info.size
     end
-    return size
+    -- Round up to 4-byte alignment (PSX requires aligned 32-bit reads)
+    local aligned_size = math.ceil(size / 4) * 4
+    return aligned_size
 end
 
 -- Serialize script instructions to byte string
@@ -1681,6 +1469,13 @@ function M.write_script_to_memory(base_addr, script_ptr, instructions)
         end
 
         offset = offset + info.size
+    end
+
+    -- Pad to 4-byte alignment with zeros (PSX requires aligned 32-bit reads)
+    local aligned_size = math.ceil(offset / 4) * 4
+    while offset < aligned_size do
+        mem.write8(addr + offset, 0)
+        offset = offset + 1
     end
 end
 
@@ -1752,34 +1547,29 @@ M.SOUND_MODE_NAMES = {
     [4] = "CYCLE_ABC",
 }
 
--- Parse sound flags from file data (4 channels at effect_flags +0x08)
-function M.parse_sound_flags_from_data(data, effect_flags_ptr)
+-- Internal unified sound flags parser
+local function parse_sound_flags_impl(reader)
     local flags = {}
     for i = 0, 3 do
-        local offset = effect_flags_ptr + 0x08 + (i * 4)
+        local base = 0x08 + (i * 4)
         flags[i + 1] = {
-            mode = mem.buf_read8(data, offset + 0),
-            id_a = mem.buf_read8(data, offset + 1),
-            id_b = mem.buf_read8(data, offset + 2),
-            id_c = mem.buf_read8(data, offset + 3),
+            mode = reader.read8(base + 0),
+            id_a = reader.read8(base + 1),
+            id_b = reader.read8(base + 2),
+            id_c = reader.read8(base + 3),
         }
     end
     return flags
 end
 
+-- Parse sound flags from file data (4 channels at effect_flags +0x08)
+function M.parse_sound_flags_from_data(data, effect_flags_ptr)
+    return parse_sound_flags_impl(mem.buffer_reader(data, effect_flags_ptr))
+end
+
 -- Parse sound flags from PSX memory
 function M.parse_sound_flags_from_memory(base_addr, effect_flags_ptr)
-    local flags = {}
-    for i = 0, 3 do
-        local addr = base_addr + effect_flags_ptr + 0x08 + (i * 4)
-        flags[i + 1] = {
-            mode = mem.read8(addr + 0),
-            id_a = mem.read8(addr + 1),
-            id_b = mem.read8(addr + 2),
-            id_c = mem.read8(addr + 3),
-        }
-    end
-    return flags
+    return parse_sound_flags_impl(mem.memory_reader(base_addr + effect_flags_ptr))
 end
 
 -- Write sound flags to PSX memory
@@ -2315,172 +2105,92 @@ local function encode_texture_page(x_base, y_base, semi_trans_mode, color_depth)
     return (x_base % 16) + (y_base % 2) * 16 + (semi_trans_mode % 4) * 32 + (color_depth % 4) * 128
 end
 
--- Parse a single frame (24 bytes) from buffer
-local function parse_frame_from_buffer(data, offset, frame_index)
-    local flags_byte0 = mem.buf_read8(data, offset)
-    local flags_byte1 = mem.buf_read8(data, offset + 1)
-    local texture_page = mem.buf_read16(data, offset + 2)
+-- Internal unified frame parser (24 bytes)
+local function parse_frame_impl(reader, frame_index, base_offset)
+    local flags_byte0 = reader.read8(0)
+    local flags_byte1 = reader.read8(1)
+    local texture_page = reader.read16(2)
 
-    local uv_x = mem.buf_read8(data, offset + 4)
-    local uv_y = mem.buf_read8(data, offset + 5)
+    local uv_x = reader.read8(4)
+    local uv_y = reader.read8(5)
 
-    -- UV width/height can be signed
+    -- UV width/height can be signed based on flags
     local flags1 = decode_frame_flags_byte1(flags_byte1)
-    local uv_width, uv_height
-    if flags1.width_signed then
-        uv_width = mem.buf_read8(data, offset + 6)
-        if uv_width > 127 then uv_width = uv_width - 256 end
-    else
-        uv_width = mem.buf_read8(data, offset + 6)
-    end
-    if flags1.height_signed then
-        uv_height = mem.buf_read8(data, offset + 7)
-        if uv_height > 127 then uv_height = uv_height - 256 end
-    else
-        uv_height = mem.buf_read8(data, offset + 7)
-    end
+    local uv_width = reader.read8(6)
+    if flags1.width_signed and uv_width > 127 then uv_width = uv_width - 256 end
+    local uv_height = reader.read8(7)
+    if flags1.height_signed and uv_height > 127 then uv_height = uv_height - 256 end
 
     -- Vertices (signed 16-bit)
-    local vtx_tl_x = mem.buf_read16s(data, offset + 8)
-    local vtx_tl_y = mem.buf_read16s(data, offset + 10)
-    local vtx_tr_x = mem.buf_read16s(data, offset + 12)
-    local vtx_tr_y = mem.buf_read16s(data, offset + 14)
-    local vtx_bl_x = mem.buf_read16s(data, offset + 16)
-    local vtx_bl_y = mem.buf_read16s(data, offset + 18)
-    local vtx_br_x = mem.buf_read16s(data, offset + 20)
-    local vtx_br_y = mem.buf_read16s(data, offset + 22)
-
     local flags0 = decode_frame_flags_byte0(flags_byte0)
     local tpage = decode_texture_page(texture_page)
 
     return {
         index = frame_index,
-        offset = offset,
-        -- Raw bytes for flags
+        offset = base_offset,
         flags_byte0 = flags_byte0,
         flags_byte1 = flags_byte1,
         texture_page_raw = texture_page,
-        -- Decoded flags
         palette_id = flags0.palette_id,
         semi_trans_mode = flags0.semi_trans_mode,
         is_8bpp = flags0.is_8bpp,
         semi_trans_on = flags1.semi_trans_on,
         width_signed = flags1.width_signed,
         height_signed = flags1.height_signed,
-        -- Decoded texture page
         tpage_x_base = tpage.x_base,
         tpage_y_base = tpage.y_base,
         tpage_blend = tpage.semi_trans_mode,
         tpage_color_depth = tpage.color_depth,
-        -- UV coordinates
         uv_x = uv_x,
         uv_y = uv_y,
         uv_width = uv_width,
         uv_height = uv_height,
-        -- Vertices
-        vtx_tl_x = vtx_tl_x,
-        vtx_tl_y = vtx_tl_y,
-        vtx_tr_x = vtx_tr_x,
-        vtx_tr_y = vtx_tr_y,
-        vtx_bl_x = vtx_bl_x,
-        vtx_bl_y = vtx_bl_y,
-        vtx_br_x = vtx_br_x,
-        vtx_br_y = vtx_br_y,
+        vtx_tl_x = reader.read16s(8),
+        vtx_tl_y = reader.read16s(10),
+        vtx_tr_x = reader.read16s(12),
+        vtx_tr_y = reader.read16s(14),
+        vtx_bl_x = reader.read16s(16),
+        vtx_bl_y = reader.read16s(18),
+        vtx_br_x = reader.read16s(20),
+        vtx_br_y = reader.read16s(22),
     }
+end
+
+-- Parse a single frame (24 bytes) from buffer
+local function parse_frame_from_buffer(data, offset, frame_index)
+    return parse_frame_impl(mem.buffer_reader(data, offset), frame_index, offset)
 end
 
 -- Parse a single frame (24 bytes) from memory
 local function parse_frame_from_memory(addr, frame_index)
-    local flags_byte0 = mem.read8(addr)
-    local flags_byte1 = mem.read8(addr + 1)
-    local texture_page = mem.read16(addr + 2)
-
-    local uv_x = mem.read8(addr + 4)
-    local uv_y = mem.read8(addr + 5)
-
-    local flags1 = decode_frame_flags_byte1(flags_byte1)
-    local uv_width, uv_height
-    if flags1.width_signed then
-        uv_width = mem.read8(addr + 6)
-        if uv_width > 127 then uv_width = uv_width - 256 end
-    else
-        uv_width = mem.read8(addr + 6)
-    end
-    if flags1.height_signed then
-        uv_height = mem.read8(addr + 7)
-        if uv_height > 127 then uv_height = uv_height - 256 end
-    else
-        uv_height = mem.read8(addr + 7)
-    end
-
-    -- Vertices (signed 16-bit)
-    local vtx_tl_x = mem.read16s(addr + 8)
-    local vtx_tl_y = mem.read16s(addr + 10)
-    local vtx_tr_x = mem.read16s(addr + 12)
-    local vtx_tr_y = mem.read16s(addr + 14)
-    local vtx_bl_x = mem.read16s(addr + 16)
-    local vtx_bl_y = mem.read16s(addr + 18)
-    local vtx_br_x = mem.read16s(addr + 20)
-    local vtx_br_y = mem.read16s(addr + 22)
-
-    local flags0 = decode_frame_flags_byte0(flags_byte0)
-    local tpage = decode_texture_page(texture_page)
-
-    return {
-        index = frame_index,
-        offset = nil,  -- Not meaningful for memory reads
-        flags_byte0 = flags_byte0,
-        flags_byte1 = flags_byte1,
-        texture_page_raw = texture_page,
-        palette_id = flags0.palette_id,
-        semi_trans_mode = flags0.semi_trans_mode,
-        is_8bpp = flags0.is_8bpp,
-        semi_trans_on = flags1.semi_trans_on,
-        width_signed = flags1.width_signed,
-        height_signed = flags1.height_signed,
-        tpage_x_base = tpage.x_base,
-        tpage_y_base = tpage.y_base,
-        tpage_blend = tpage.semi_trans_mode,
-        tpage_color_depth = tpage.color_depth,
-        uv_x = uv_x,
-        uv_y = uv_y,
-        uv_width = uv_width,
-        uv_height = uv_height,
-        vtx_tl_x = vtx_tl_x,
-        vtx_tl_y = vtx_tl_y,
-        vtx_tr_x = vtx_tr_x,
-        vtx_tr_y = vtx_tr_y,
-        vtx_bl_x = vtx_bl_x,
-        vtx_bl_y = vtx_bl_y,
-        vtx_br_x = vtx_br_x,
-        vtx_br_y = vtx_br_y,
-    }
+    return parse_frame_impl(mem.memory_reader(addr), frame_index, nil)
 end
 
--- Parse frames section from file data
--- Returns: framesets (array), group_count (number)
-function M.parse_frames_section_from_data(data, frames_ptr, section_size)
+-- Internal unified frames section parser
+-- Returns: framesets (array), group_count (number), offset_table_entry_count (number)
+local function parse_frames_section_impl(reader, section_size, track_file_offset)
     local framesets = {}
 
     if section_size < 8 then
-        return framesets, 0
+        return framesets, 0, 0
     end
 
     -- Header: byte 0 = group_count
-    local group_count = mem.buf_read8(data, frames_ptr)
+    local group_count = reader.read8(0)
     local group_entries_end = 4 + group_count * 2  -- offset table starts after group entries
 
     if group_entries_end >= section_size then
-        return framesets, group_count
+        return framesets, group_count, 0
     end
 
     -- First frameset offset tells us where frame data starts
-    local first_offset = mem.buf_read16(data, frames_ptr + group_entries_end)
+    local first_offset = reader.read16(group_entries_end)
     local frame_sets_data_start = first_offset + 4
+    -- max_frame_sets = PHYSICAL offset table entry count (includes terminator if present)
     local max_frame_sets = math.floor((frame_sets_data_start - group_entries_end) / 2)
 
     if max_frame_sets <= 0 or max_frame_sets > 500 then
-        return framesets, group_count
+        return framesets, group_count, 0
     end
 
     -- Count actual valid entries in offset table
@@ -2488,13 +2198,13 @@ function M.parse_frames_section_from_data(data, frames_ptr, section_size)
     for i = 0, max_frame_sets - 1 do
         local offset_pos = group_entries_end + i * 2
         if offset_pos + 2 > section_size then break end
-        local raw_offset = mem.buf_read16(data, frames_ptr + offset_pos)
+        local raw_offset = reader.read16(offset_pos)
         if raw_offset < first_offset then break end
         num_frame_sets = num_frame_sets + 1
     end
 
     if num_frame_sets <= 0 then
-        return framesets, group_count
+        return framesets, group_count, max_frame_sets
     end
 
     -- Parse each frameset
@@ -2502,14 +2212,14 @@ function M.parse_frames_section_from_data(data, frames_ptr, section_size)
         local offset_pos = group_entries_end + fs_idx * 2
         if offset_pos + 2 > section_size then break end
 
-        local raw_offset = mem.buf_read16(data, frames_ptr + offset_pos)
+        local raw_offset = reader.read16(offset_pos)
         local fs_section_offset = raw_offset + 4
 
         if fs_section_offset + FRAMESET_HEADER_SIZE > section_size then break end
 
         -- Frameset header
-        local header_flags = mem.buf_read16(data, frames_ptr + fs_section_offset)
-        local frame_count = mem.buf_read16(data, frames_ptr + fs_section_offset + 2)
+        local header_flags = reader.read16(fs_section_offset)
+        local frame_count = reader.read16(fs_section_offset + 2)
 
         if frame_count <= 0 or frame_count > 100 then
             goto continue
@@ -2523,13 +2233,20 @@ function M.parse_frames_section_from_data(data, frames_ptr, section_size)
 
             if frame_offset + FRAME_SIZE > section_size then break end
 
-            local frame = parse_frame_from_buffer(data, frames_ptr + frame_offset, frame_idx)
-            frames[#frames + 1] = frame
+            -- Create a reader at the frame offset
+            local frame_reader = {
+                read8 = function(off) return reader.read8(frame_offset + off) end,
+                read16 = function(off) return reader.read16(frame_offset + off) end,
+                read16s = function(off) return reader.read16s(frame_offset + off) end,
+                read32 = function(off) return reader.read32(frame_offset + off) end,
+            }
+            local file_offset = track_file_offset and (track_file_offset + frame_offset) or nil
+            frames[#frames + 1] = parse_frame_impl(frame_reader, frame_idx, file_offset)
         end
 
         framesets[#framesets + 1] = {
             index = fs_idx,
-            file_offset = frames_ptr + fs_section_offset,
+            file_offset = track_file_offset and (track_file_offset + fs_section_offset) or nil,
             header_flags = header_flags,
             frames = frames,
         }
@@ -2537,83 +2254,17 @@ function M.parse_frames_section_from_data(data, frames_ptr, section_size)
         ::continue::
     end
 
-    return framesets, group_count
+    return framesets, group_count, max_frame_sets
+end
+
+-- Parse frames section from file data
+function M.parse_frames_section_from_data(data, frames_ptr, section_size)
+    return parse_frames_section_impl(mem.buffer_reader(data, frames_ptr), section_size, frames_ptr)
 end
 
 -- Parse frames section from PSX memory
 function M.parse_frames_section_from_memory(base_addr, frames_ptr, section_size)
-    local addr = base_addr + frames_ptr
-    local framesets = {}
-
-    if section_size < 8 then
-        return framesets, 0
-    end
-
-    local group_count = mem.read8(addr)
-    local group_entries_end = 4 + group_count * 2
-
-    if group_entries_end >= section_size then
-        return framesets, group_count
-    end
-
-    local first_offset = mem.read16(addr + group_entries_end)
-    local frame_sets_data_start = first_offset + 4
-    local max_frame_sets = math.floor((frame_sets_data_start - group_entries_end) / 2)
-
-    if max_frame_sets <= 0 or max_frame_sets > 500 then
-        return framesets, group_count
-    end
-
-    local num_frame_sets = 0
-    for i = 0, max_frame_sets - 1 do
-        local offset_pos = group_entries_end + i * 2
-        if offset_pos + 2 > section_size then break end
-        local raw_offset = mem.read16(addr + offset_pos)
-        if raw_offset < first_offset then break end
-        num_frame_sets = num_frame_sets + 1
-    end
-
-    if num_frame_sets <= 0 then
-        return framesets, group_count
-    end
-
-    for fs_idx = 0, num_frame_sets - 1 do
-        local offset_pos = group_entries_end + fs_idx * 2
-        if offset_pos + 2 > section_size then break end
-
-        local raw_offset = mem.read16(addr + offset_pos)
-        local fs_section_offset = raw_offset + 4
-
-        if fs_section_offset + FRAMESET_HEADER_SIZE > section_size then break end
-
-        local header_flags = mem.read16(addr + fs_section_offset)
-        local frame_count = mem.read16(addr + fs_section_offset + 2)
-
-        if frame_count <= 0 or frame_count > 100 then
-            goto continue
-        end
-
-        local frames = {}
-
-        for frame_idx = 0, frame_count - 1 do
-            local frame_offset = fs_section_offset + FRAMESET_HEADER_SIZE + frame_idx * FRAME_SIZE
-            if frame_offset + FRAME_SIZE > section_size then break end
-
-            local frame = parse_frame_from_memory(addr + frame_offset, frame_idx)
-            frames[#frames + 1] = frame
-        end
-
-        framesets[#framesets + 1] = {
-            index = fs_idx,
-            file_offset = nil,
-            header_flags = header_flags,
-            frames = frames,
-        }
-
-        ::continue::
-    end
-
-    return framesets, group_count
+    return parse_frames_section_impl(mem.memory_reader(base_addr + frames_ptr), section_size, nil)
 end
 
 -- Write a single frame to memory
@@ -2654,44 +2305,81 @@ local function write_frame_to_memory(addr, frame)
 end
 
 -- Calculate total frames section size for given framesets and group count
-function M.calculate_frames_section_size(framesets, group_count)
+-- offset_table_count: PHYSICAL offset table entry count (may include terminator)
+--                     If not provided, uses #framesets (for backward compatibility)
+function M.calculate_frames_section_size(framesets, group_count, offset_table_count)
     if not framesets or #framesets == 0 then
         return 4  -- Minimum header
     end
 
     -- Header: 4 bytes (group_count + padding)
     -- Group entries: group_count * 2 bytes
-    -- Frameset offset table: num_framesets * 2 bytes
+    -- Frameset offset table: offset_table_count * 2 bytes (uses physical count to include terminator)
+    -- Alignment padding: to 4 bytes before frameset data
     -- Frameset data: sum of (4 + frame_count * 24) for each frameset
 
     local header_size = 4
     local group_entries_size = group_count * 2
-    local offset_table_size = #framesets * 2
-    local framesets_data_size = 0
+    -- Use physical offset_table_count if provided, otherwise fall back to #framesets
+    local offset_table_size = (offset_table_count or #framesets) * 2
 
+    -- Calculate frameset data start with 4-byte alignment
+    local frameset_data_start_raw = header_size + group_entries_size + offset_table_size
+    local frameset_data_start = math.ceil(frameset_data_start_raw / 4) * 4
+
+    local framesets_data_size = 0
     for _, fs in ipairs(framesets) do
         framesets_data_size = framesets_data_size + FRAMESET_HEADER_SIZE + #fs.frames * FRAME_SIZE
     end
 
-    return header_size + group_entries_size + offset_table_size + framesets_data_size
+    local total_size = frameset_data_start + framesets_data_size
+    -- Round up to 4-byte alignment (PSX requires aligned 32-bit reads)
+    local aligned_size = math.ceil(total_size / 4) * 4
+    return aligned_size
 end
 
 -- Write frames section to memory
-function M.write_frames_section_to_memory(base_addr, frames_ptr, framesets, group_count)
+-- offset_table_count: PHYSICAL offset table entry count (may include null terminator)
+--                     If not provided, uses #framesets (for backward compatibility)
+function M.write_frames_section_to_memory(base_addr, frames_ptr, framesets, group_count, offset_table_count)
     if not framesets or #framesets == 0 then return end
 
     local addr = base_addr + frames_ptr
+
+    -- Calculate offsets - use physical offset_table_count to preserve original layout
+    local group_entries_end = 4 + group_count * 2
+    local actual_offset_table_count = offset_table_count or #framesets
+    local offset_table_size = actual_offset_table_count * 2
+    local frameset_data_start_raw = group_entries_end + offset_table_size
+    -- Align frameset data start to 4 bytes (PSX requires aligned reads, matches original file layout)
+    local frameset_data_start = math.ceil(frameset_data_start_raw / 4) * 4
+
+    -- DEBUG: Read original offset table entries BEFORE we overwrite
+    print(string.format("[FRAMES_DEBUG] === write_frames_section_to_memory ==="))
+    print(string.format("[FRAMES_DEBUG] base_addr=0x%08X, frames_ptr=0x%X, addr=0x%08X", base_addr, frames_ptr, addr))
+    -- Check what frames_ptr is stored in header memory
+    local mem_frames_ptr = mem.read32(base_addr + 0x00)
+    print(string.format("[FRAMES_DEBUG] Memory header[0x00] (frames_ptr) = 0x%X", mem_frames_ptr))
+    if mem_frames_ptr ~= frames_ptr then
+        print(string.format("[FRAMES_DEBUG] WARNING: frames_ptr mismatch! Lua has 0x%X, memory has 0x%X", frames_ptr, mem_frames_ptr))
+    end
+    print(string.format("[FRAMES_DEBUG] group_count=%d, offset_table_count=%d, #framesets=%d", group_count, actual_offset_table_count, #framesets))
+    print(string.format("[FRAMES_DEBUG] group_entries_end=%d (0x%X)", group_entries_end, group_entries_end))
+    print(string.format("[FRAMES_DEBUG] offset_table_size=%d, frameset_data_start_raw=%d, frameset_data_start=%d (aligned)", offset_table_size, frameset_data_start_raw, frameset_data_start))
+    print(string.format("[FRAMES_DEBUG] Alignment padding: %d bytes", frameset_data_start - frameset_data_start_raw))
+
+    -- Read original first 5 offset table entries for comparison
+    print("[FRAMES_DEBUG] Original offset table entries (first 5):")
+    for i = 0, math.min(4, actual_offset_table_count - 1) do
+        local orig_entry = mem.read16(addr + group_entries_end + i * 2)
+        print(string.format("[FRAMES_DEBUG]   [%d] = %d (0x%04X)", i, orig_entry, orig_entry))
+    end
 
     -- Write header: group_count and padding
     mem.write8(addr, group_count)
     mem.write8(addr + 1, 0)
     mem.write8(addr + 2, 0)
     mem.write8(addr + 3, 0)
-
-    -- Calculate offsets
-    local group_entries_end = 4 + group_count * 2
-    local offset_table_size = #framesets * 2
-    local frameset_data_start = group_entries_end + offset_table_size
 
     -- Write group entries
     -- Each group entry is RELATIVE to sprite_def_table_ptr (which is frames_ptr + 4)
@@ -2706,11 +2394,19 @@ function M.write_frames_section_to_memory(base_addr, frames_ptr, framesets, grou
     end
 
     -- Write frameset offset table and data
+    print("[FRAMES_DEBUG] Writing offset table entries (first 5):")
     local current_data_offset = frameset_data_start
     for fs_idx, fs in ipairs(framesets) do
         -- Write offset table entry (relative to after the +4 in parsing logic)
         local offset_table_entry_addr = addr + group_entries_end + (fs_idx - 1) * 2
-        mem.write16(offset_table_entry_addr, current_data_offset - 4)
+        local entry_value = current_data_offset - 4
+        mem.write16(offset_table_entry_addr, entry_value)
+
+        -- Debug first 5 entries
+        if fs_idx <= 5 then
+            print(string.format("[FRAMES_DEBUG]   [%d] = %d (0x%04X), frameset at section offset %d, %d frames",
+                fs_idx - 1, entry_value, entry_value, current_data_offset, #fs.frames))
+        end
 
         -- Write frameset header
         local fs_addr = addr + current_data_offset
@@ -2725,10 +2421,54 @@ function M.write_frames_section_to_memory(base_addr, frames_ptr, framesets, grou
 
         current_data_offset = current_data_offset + FRAMESET_HEADER_SIZE + #fs.frames * FRAME_SIZE
     end
+
+    -- Write null terminator entries if offset_table_count > #framesets
+    for i = #framesets, actual_offset_table_count - 1 do
+        local terminator_addr = addr + group_entries_end + i * 2
+        mem.write16(terminator_addr, 0)  -- Null terminator
+    end
+
+    -- Write alignment padding between offset table and frameset data
+    local offset_table_end = group_entries_end + offset_table_size
+    for pad_offset = offset_table_end, frameset_data_start - 1 do
+        mem.write8(addr + pad_offset, 0)
+    end
+
+    -- Pad to 4-byte alignment with zeros (PSX requires aligned 32-bit reads)
+    local raw_size = current_data_offset
+    local aligned_size = math.ceil(raw_size / 4) * 4
+    while raw_size < aligned_size do
+        mem.write8(addr + raw_size, 0)
+        raw_size = raw_size + 1
+    end
+
+    -- FIX: Set global pointer sprite_def_table_ptr so game can find frames
+    -- This pointer is at 0x801BBF78 and must point to frames section + 4
+    -- After savestate reload, this pointer may be NULL or stale
+    local sprite_def_table_ptr = mem.read32(0x801BBF78)
+    local expected_sprite_def_table_ptr = addr + 4
+    print(string.format("[FRAMES_DEBUG] Global sprite_def_table_ptr = 0x%08X", sprite_def_table_ptr))
+    print(string.format("[FRAMES_DEBUG] Expected (addr+4)          = 0x%08X", expected_sprite_def_table_ptr))
+    if sprite_def_table_ptr ~= expected_sprite_def_table_ptr then
+        print("[FRAMES_DEBUG] FIXING: Setting sprite_def_table_ptr to correct value!")
+        mem.write32(0x801BBF78, expected_sprite_def_table_ptr)
+        -- Verify the fix
+        local verify = mem.read32(0x801BBF78)
+        print(string.format("[FRAMES_DEBUG] Verified sprite_def_table_ptr = 0x%08X", verify))
+    else
+        print("[FRAMES_DEBUG] OK: sprite_def_table_ptr already correct")
+    end
+
+    -- DEBUG: Verify what we wrote by reading back first offset entry
+    local readback_entry0 = mem.read16(addr + group_entries_end)
+    print(string.format("[FRAMES_DEBUG] Readback: offset_table[0] = %d (0x%04X)", readback_entry0, readback_entry0))
+    print(string.format("[FRAMES_DEBUG] Total section size: %d bytes", aligned_size))
 end
 
 -- Serialize frames section to byte string (for .bin saving)
-function M.serialize_frames_section(framesets, group_count)
+-- offset_table_count: PHYSICAL offset table entry count (may include null terminator)
+--                     If not provided, uses #framesets (for backward compatibility)
+function M.serialize_frames_section(framesets, group_count, offset_table_count)
     if not framesets or #framesets == 0 then
         return string.char(0, 0, 0, 0), 4
     end
@@ -2738,10 +2478,13 @@ function M.serialize_frames_section(framesets, group_count)
     -- Header: group_count + padding
     bytes[#bytes + 1] = string.char(group_count, 0, 0, 0)
 
-    -- Calculate structure
+    -- Calculate structure - use physical offset_table_count to preserve original layout
     local group_entries_end = 4 + group_count * 2
-    local offset_table_size = #framesets * 2
-    local frameset_data_start = group_entries_end + offset_table_size
+    local actual_offset_table_count = offset_table_count or #framesets
+    local offset_table_size = actual_offset_table_count * 2
+    local frameset_data_start_raw = group_entries_end + offset_table_size
+    -- Align frameset data start to 4 bytes (PSX requires aligned reads, matches original file layout)
+    local frameset_data_start = math.ceil(frameset_data_start_raw / 4) * 4
 
     -- Group entries (relative to sprite_def_table_ptr which is at byte 4)
     -- For single group: offset table starts at group_entries_end, relative to byte 4 = group_entries_end - 4
@@ -2756,6 +2499,17 @@ function M.serialize_frames_section(framesets, group_count)
         local entry = current_data_offset - 4
         bytes[#bytes + 1] = string.char(entry % 256, math.floor(entry / 256))
         current_data_offset = current_data_offset + FRAMESET_HEADER_SIZE + #fs.frames * FRAME_SIZE
+    end
+
+    -- Write null terminator entries if offset_table_count > #framesets
+    for i = #framesets + 1, actual_offset_table_count do
+        bytes[#bytes + 1] = string.char(0, 0)  -- Null terminator
+    end
+
+    -- Write alignment padding between offset table and frameset data
+    local padding_needed = frameset_data_start - frameset_data_start_raw
+    for i = 1, padding_needed do
+        bytes[#bytes + 1] = string.char(0)
     end
 
     -- Frameset data
@@ -2945,17 +2699,11 @@ function M.parse_sequence(data, start_pos, end_pos)
     return instructions
 end
 
--- Parse entire animation section from file data
--- anim_ptr is 0-indexed file offset
--- section_size is bytes from animation_ptr to script_ptr
-function M.parse_animation_section_from_data(data, anim_ptr, section_size)
-    local base = anim_ptr + 1  -- Lua 1-indexed
-
+-- Internal unified animation section parser
+-- Note: This works with readers, but parse_sequence requires string data internally
+local function parse_animation_section_impl(reader, section_size, is_buffer, buffer_data, buffer_base)
     -- Read animation count (4-byte LE)
-    local count = (data:byte(base) or 0) +
-                  (data:byte(base + 1) or 0) * 256 +
-                  (data:byte(base + 2) or 0) * 65536 +
-                  (data:byte(base + 3) or 0) * 16777216
+    local count = reader.read32(0)
 
     if count == 0 or count > 1000 then
         return {}, 0
@@ -2963,21 +2711,34 @@ function M.parse_animation_section_from_data(data, anim_ptr, section_size)
 
     local sequences = {}
     for i = 0, count - 1 do
-        -- Offset table at base + 4 + i*2 (u16 offsets, relative to byte 4)
-        local offset_pos = base + 4 + i * 2
-        local offset = (data:byte(offset_pos) or 0) + (data:byte(offset_pos + 1) or 0) * 256
-        local seq_start = base + 4 + offset
+        -- Offset table at offset 4 + i*2 (u16 offsets, relative to byte 4)
+        local offset = reader.read16(4 + i * 2)
 
-        -- Find end (next offset or section end)
-        local seq_end
+        -- Find sequence size (to next offset or section end)
+        local seq_size
         if i < count - 1 then
-            local next_offset = (data:byte(offset_pos + 2) or 0) + (data:byte(offset_pos + 3) or 0) * 256
-            seq_end = base + 4 + next_offset - 1
+            local next_offset = reader.read16(4 + (i + 1) * 2)
+            seq_size = next_offset - offset
         else
-            seq_end = base + section_size - 1
+            seq_size = section_size - 4 - offset
         end
 
-        local instructions = M.parse_sequence(data, seq_start, seq_end)
+        local instructions
+        if is_buffer then
+            -- Buffer mode: use string directly
+            local seq_start = buffer_base + 4 + offset
+            local seq_end = seq_start + seq_size - 1
+            instructions = M.parse_sequence(buffer_data, seq_start, seq_end)
+        else
+            -- Memory mode: read bytes into string
+            local seq_bytes = {}
+            for j = 0, seq_size - 1 do
+                seq_bytes[j + 1] = string.char(reader.read8(4 + offset + j))
+            end
+            local seq_data = table.concat(seq_bytes)
+            instructions = M.parse_sequence(seq_data, 1, seq_size)
+        end
+
         table.insert(sequences, {
             index = i,
             instructions = instructions
@@ -2987,48 +2748,16 @@ function M.parse_animation_section_from_data(data, anim_ptr, section_size)
     return sequences, count
 end
 
+-- Parse entire animation section from file data
+function M.parse_animation_section_from_data(data, anim_ptr, section_size)
+    local reader = mem.buffer_reader(data, anim_ptr)
+    return parse_animation_section_impl(reader, section_size, true, data, anim_ptr + 1)
+end
+
 -- Parse animation section from PSX memory
 function M.parse_animation_section_from_memory(base_addr, anim_ptr, section_size)
-    local addr = base_addr + anim_ptr
-
-    -- Read animation count (4-byte LE)
-    local count = mem.read32(addr)
-
-    if count == 0 or count > 1000 then
-        return {}, 0
-    end
-
-    local sequences = {}
-    for i = 0, count - 1 do
-        -- Offset table at addr + 4 + i*2
-        local offset = mem.read16(addr + 4 + i * 2)
-        local seq_addr = addr + 4 + offset
-
-        -- Find end (next offset or section end)
-        local seq_size
-        if i < count - 1 then
-            local next_offset = mem.read16(addr + 4 + (i + 1) * 2)
-            seq_size = next_offset - offset
-        else
-            -- Last sequence: goes to section end
-            seq_size = section_size - 4 - offset
-        end
-
-        -- Read sequence bytes into string
-        local seq_bytes = {}
-        for j = 0, seq_size - 1 do
-            seq_bytes[j + 1] = string.char(mem.read8(seq_addr + j))
-        end
-        local seq_data = table.concat(seq_bytes)
-
-        local instructions = M.parse_sequence(seq_data, 1, seq_size)
-        table.insert(sequences, {
-            index = i,
-            instructions = instructions
-        })
-    end
-
-    return sequences, count
+    local reader = mem.memory_reader(base_addr + anim_ptr)
+    return parse_animation_section_impl(reader, section_size, false, nil, nil)
 end
 
 -- Calculate size of a single sequence in bytes
@@ -3051,6 +2780,7 @@ function M.calculate_sequence_size(instructions)
 end
 
 -- Calculate total animation section size in bytes
+-- NOTE: Returns 4-byte aligned size to ensure downstream pointers stay aligned
 function M.calculate_animation_section_size(sequences)
     if not sequences or #sequences == 0 then
         return 4  -- Just the header (count = 0)
@@ -3063,7 +2793,9 @@ function M.calculate_animation_section_size(sequences)
         size = size + M.calculate_sequence_size(seq.instructions)
     end
 
-    return size
+    -- Round up to 4-byte alignment (PSX requires aligned 32-bit reads)
+    local aligned_size = math.ceil(size / 4) * 4
+    return aligned_size
 end
 
 -- Serialize single sequence instruction to bytes
@@ -3220,6 +2952,259 @@ function M.create_sequence(index)
             { opcode = 0x81, name = "LOOP", params = {} }
         }
     }
+end
+
+--------------------------------------------------------------------------------
+-- Sequence Preview Mode Helpers
+--------------------------------------------------------------------------------
+
+-- Deep copy a single sequence instruction
+function M.copy_sequence_instruction(instr)
+    if not instr then return nil end
+    local copy = {
+        opcode = instr.opcode,
+        name = instr.name,
+        params = {}
+    }
+    for i, p in ipairs(instr.params) do
+        copy.params[i] = p
+    end
+    return copy
+end
+
+-- Modify sequence for preview: replace dur=0 frames with dur=1 (preserves byte count!)
+-- This prevents animation-driven particle death so sequences loop indefinitely
+-- IMPORTANT: We replace instead of remove to avoid changing animation section size
+function M.modify_sequence_for_preview(seq)
+    local new_instructions = {}
+    local has_loop = false
+
+    for _, instr in ipairs(seq.instructions) do
+        local copy = M.copy_sequence_instruction(instr)
+        if copy.name == "FRAME" and copy.params[2] == 0 then
+            -- Replace duration=0 with duration=1 (same 3 bytes, prevents death)
+            copy.params[2] = 1
+        end
+        if copy.name == "LOOP" then has_loop = true end
+        table.insert(new_instructions, copy)
+    end
+
+    -- Ensure LOOP exists (prevents running off sequence end)
+    -- NOTE: This DOES add bytes - if no LOOP exists, we add 1 byte
+    -- For now accept this; most sequences have LOOP already
+    if not has_loop and #new_instructions > 0 then
+        table.insert(new_instructions, M.create_sequence_instruction("LOOP"))
+    end
+
+    return new_instructions
+end
+
+-- Create a default emitter with all fields initialized
+function M.create_default_emitter()
+    local e = {
+        index = 0,
+        -- Control bytes
+        byte_00 = 0,
+        anim_index = 0,
+        motion_type_flag = 0,
+        animation_target_flag = 0,
+        anim_param = 0,
+        byte_05 = 0,
+        emitter_flags_lo = 0,
+        emitter_flags_hi = 0,
+        -- Curve indices (all 0 = no curves)
+        curve_indices_08 = 0,
+        curve_indices_09 = 0,
+        curve_indices_0A = 0,
+        curve_indices_0B = 0,
+        curve_indices_0C = 0,
+        curve_indices_0D = 0,
+        curve_indices_0E = 0,
+        curve_indices_0F = 0,
+        -- Color curves
+        color_curves_rg = 0,
+        color_curves_b = 0,
+        -- Position
+        start_position_x = 0, start_position_y = 0, start_position_z = 0,
+        end_position_x = 0, end_position_y = 0, end_position_z = 0,
+        -- Spread
+        spread_x_start = 0, spread_y_start = 0, spread_z_start = 0,
+        spread_x_end = 0, spread_y_end = 0, spread_z_end = 0,
+        -- Velocity
+        velocity_base_angle_x_start = 0, velocity_base_angle_y_start = 0, velocity_base_angle_z_start = 0,
+        velocity_base_angle_x_end = 0, velocity_base_angle_y_end = 0, velocity_base_angle_z_end = 0,
+        velocity_direction_spread_x_start = 0, velocity_direction_spread_y_start = 0, velocity_direction_spread_z_start = 0,
+        velocity_direction_spread_x_end = 0, velocity_direction_spread_y_end = 0, velocity_direction_spread_z_end = 0,
+        -- Physics
+        inertia_min_start = 4096, inertia_max_start = 4096,
+        inertia_min_end = 4096, inertia_max_end = 4096,
+        weight_min_start = 0, weight_max_start = 0,
+        weight_min_end = 0, weight_max_end = 0,
+        radial_velocity_min_start = 0, radial_velocity_max_start = 0,
+        radial_velocity_min_end = 0, radial_velocity_max_end = 0,
+        -- Acceleration
+        acceleration_x_min_start = 0, acceleration_x_max_start = 0,
+        acceleration_y_min_start = 0, acceleration_y_max_start = 0,
+        acceleration_z_min_start = 0, acceleration_z_max_start = 0,
+        acceleration_x_min_end = 0, acceleration_x_max_end = 0,
+        acceleration_y_min_end = 0, acceleration_y_max_end = 0,
+        acceleration_z_min_end = 0, acceleration_z_max_end = 0,
+        -- Drag
+        drag_x_min_start = 0, drag_x_max_start = 0,
+        drag_y_min_start = 0, drag_y_max_start = 0,
+        drag_z_min_start = 0, drag_z_max_start = 0,
+        drag_x_min_end = 0, drag_x_max_end = 0,
+        drag_y_min_end = 0, drag_y_max_end = 0,
+        drag_z_min_end = 0, drag_z_max_end = 0,
+        -- Lifetime (animation-driven = -1)
+        lifetime_min_start = -1, lifetime_max_start = -1,
+        lifetime_min_end = -1, lifetime_max_end = -1,
+        -- Target offset
+        target_offset_x_start = 0, target_offset_y_start = 0, target_offset_z_start = 0,
+        target_offset_x_end = 0, target_offset_y_end = 0, target_offset_z_end = 0,
+        -- Spawn control
+        particle_count_start = 1, particle_count_end = 1,
+        spawn_interval_start = 1, spawn_interval_end = 1,
+        -- Homing
+        homing_strength_min_start = 0, homing_strength_max_start = 0,
+        homing_strength_min_end = 0, homing_strength_max_end = 0,
+        -- Child emitters
+        child_emitter_on_death = 0,
+        child_emitter_mid_life = 0,
+    }
+    return e
+end
+
+-- Create a static preview emitter for viewing a sequence
+-- Particles spawn at fixed world position, no physics, animation-driven lifetime
+function M.create_preview_emitter(sequence_index, x_offset, y_offset)
+    local e = M.create_default_emitter()
+    e.index = sequence_index
+    e.anim_index = sequence_index
+
+    -- Set WORLD anchor mode (bits 1-3 of animation_target_flag = 0 = WORLD)
+    -- Bit 0 = spread_mode (0=sphere), bits 1-3 = anchor (0=WORLD)
+    e.animation_target_flag = 0  -- WORLD anchor
+
+    -- World position (absolute coordinates, not offset from any anchor)
+    e.start_position_x = x_offset
+    e.start_position_y = y_offset
+    e.start_position_z = 0
+    e.end_position_x = x_offset
+    e.end_position_y = y_offset
+    e.end_position_z = 0
+
+    -- Single particle, spawned once (large interval prevents respawn)
+    e.particle_count_start = 1
+    e.particle_count_end = 1
+    e.spawn_interval_start = 9999
+    e.spawn_interval_end = 9999
+
+    -- Animation-driven lifetime (particle lives until sequence ends/loops)
+    e.lifetime_min_start = -1
+    e.lifetime_max_start = -1
+    e.lifetime_min_end = -1
+    e.lifetime_max_end = -1
+
+    return e
+end
+
+-- Configure timeline channels for preview mode
+-- Sets up N channels, each running one emitter for a very long duration
+-- pattern: "pattern1" uses phase1 channels, "pattern2" uses animate_tick channels
+function M.configure_preview_timeline(num_sequences, timeline_channels, pattern)
+    if not timeline_channels then
+        timeline_channels = EFFECT_EDITOR.timeline_channels
+    end
+    if not timeline_channels then return end
+
+    -- For preview, always use animate_tick channels with Pattern 2
+    local target_context = "animate_tick"
+
+    -- First, clear ALL channels to avoid interference
+    -- Must clear ALL keyframes' emitter_id (not just keyframes[2]) because:
+    -- 1. UI displays up to max_keyframe + 2, so keyframes[3], [4], etc. are visible
+    -- 2. Original emitter_id values (e.g., 5, 10, 15 for Ramuh's 16 emitters) are
+    --    out of range when we only have 1 emitter, causing blank dropdown display
+    for _, channel in ipairs(timeline_channels) do
+        -- Clear emitter_id for ALL keyframes to prevent out-of-range values
+        for i = 1, 25 do  -- MAX_KEYFRAMES = 25
+            if channel.keyframes[i] then
+                channel.keyframes[i].emitter_id = 0  -- None
+            end
+        end
+        -- Configure keyframes[2] for cleared channels
+        if channel.keyframes[2] then
+            channel.keyframes[2].time = 0
+            channel.keyframes[2].action_flags = 0
+        end
+        channel.max_keyframe = 1
+    end
+
+    -- Now configure animate_tick channels for preview
+    -- Each keyframe says "run this emitter for this duration"
+    -- So time=9999 and emitter_id=N on the SAME keyframe
+    local configured = 0
+    for _, channel in ipairs(timeline_channels) do
+        if channel.context == target_context and configured < num_sequences then
+            -- Keyframe [2] (C index 1) is first active keyframe
+            -- Game pre-increments keyframe index before reading
+            -- Set duration AND emitter on the same keyframe
+            if channel.keyframes[2] then
+                channel.keyframes[2].time = 9999  -- Duration
+                channel.keyframes[2].emitter_id = configured + 1  -- 1-indexed (1 = emitter 0)
+                channel.keyframes[2].action_flags = 0
+            end
+            -- max_keyframe = 2 means only keyframes 0,1,2 are valid
+            -- Keyframe 2 is all we need
+            channel.max_keyframe = 2
+            configured = configured + 1
+        end
+    end
+end
+
+-- Configure animate_tick screen effect track for preview mode
+-- Sets a neutral screen effect: no tint, no gradient, just transparent
+function M.configure_preview_screen_track(color_tracks)
+    if not color_tracks then
+        color_tracks = EFFECT_EDITOR.color_tracks
+    end
+    if not color_tracks then return end
+
+    -- animate_tick screen track is at index 4 in the color_tracks array
+    -- (indices 1-4 are animate_tick: 1=Affected, 2=Caster, 3=Target, 4=Screen)
+    local screen_track = color_tracks[4]
+
+    if not screen_track then return end
+    if screen_track.track_type ~= "screen" then return end  -- Sanity check
+
+    -- Configure first 2 keyframes:
+    -- kf[0]: duration 0, non-tint, all RGB = 0
+    -- kf[1]: duration 255, non-tint, all RGB = 0
+    if screen_track.keyframes[1] then
+        screen_track.keyframes[1].time = 0
+        screen_track.keyframes[1].r = 0
+        screen_track.keyframes[1].g = 0
+        screen_track.keyframes[1].b = 0
+        screen_track.keyframes[1].end_r = 0
+        screen_track.keyframes[1].end_g = 0
+        screen_track.keyframes[1].end_b = 0
+        screen_track.keyframes[1].ctrl = 0  -- Non-tint mode (bit 7 = 0)
+    end
+
+    if screen_track.keyframes[2] then
+        screen_track.keyframes[2].time = 255
+        screen_track.keyframes[2].r = 0
+        screen_track.keyframes[2].g = 0
+        screen_track.keyframes[2].b = 0
+        screen_track.keyframes[2].end_r = 0
+        screen_track.keyframes[2].end_g = 0
+        screen_track.keyframes[2].end_b = 0
+        screen_track.keyframes[2].ctrl = 0  -- Non-tint mode
+    end
+
+    -- max_keyframe = 2 means keyframes[1], [2], [3] are active
+    screen_track.max_keyframe = 2
 end
 
 return M

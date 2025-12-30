@@ -143,72 +143,84 @@ local function get_texture_bmp_path()
     return dir .. EFFECT_EDITOR.session_name .. ".bmp"
 end
 
--- Check if current effect has 8bpp texture (exportable)
--- Uses file_data (.bin) instead of RAM - always reliable
-local function is_8bpp_texture()
+-- Check if current effect has exportable texture (8bpp or 4bpp)
+-- Tries file_data first, falls back to memory if not available
+local function is_exportable_texture()
     if not EFFECT_EDITOR.header or not EFFECT_EDITOR.header.texture_ptr then
         return false
     end
-    if not EFFECT_EDITOR.file_data or #EFFECT_EDITOR.file_data == 0 then
-        return false
-    end
 
-    -- Read depth flag from .bin file data (not RAM)
-    local texture_offset = EFFECT_EDITOR.header.texture_ptr
-    local depth_flag = MemUtils.buf_read8(EFFECT_EDITOR.file_data, texture_offset + 0x403)
-
-    return depth_flag == 0  -- 0 = 8bpp
+    -- Just need a valid data source
+    return (EFFECT_EDITOR.file_data and #EFFECT_EDITOR.file_data > 0) or
+           (EFFECT_EDITOR.memory_base and EFFECT_EDITOR.memory_base >= 0x80000000)
 end
 
--- Get texture dimensions from file data (.bin)
+-- Get texture dimensions from file data or memory
 -- Returns: width, height, pixel_size or nil if invalid
-local function get_texture_dimensions_from_file()
+local function get_texture_dimensions()
     if not EFFECT_EDITOR.header or not EFFECT_EDITOR.header.texture_ptr then
         return nil
     end
-    if not EFFECT_EDITOR.file_data or #EFFECT_EDITOR.file_data == 0 then
-        return nil
-    end
 
-    local data = EFFECT_EDITOR.file_data
     local texture_offset = EFFECT_EDITOR.header.texture_ptr
+    local low, mid, high, depth_flag
 
     -- Texture section layout:
     -- 0x000: Palette 1 (512 bytes)
     -- 0x200: Palette 2 (512 bytes)
-    -- 0x400: Header (4 bytes: low, width, high, depth_flag)
+    -- 0x400: Header (4 bytes: low, mid, high, depth_flag)
     -- 0x404: Pixel data
 
-    -- Read texture header bytes from file data
-    local low = MemUtils.buf_read8(data, texture_offset + 0x400)
-    local width = MemUtils.buf_read8(data, texture_offset + 0x401)
-    local high = MemUtils.buf_read8(data, texture_offset + 0x402)
-    local depth_flag = MemUtils.buf_read8(data, texture_offset + 0x403)
-
-    if width == 0 then
-        return nil
-    end
-
-    -- The 24-bit combined value encodes total pixel data size
-    local combined = low + width * 256 + high * 65536
-
-    local pixel_data_size, height
-
-    if depth_flag == 0 then
-        -- 8bpp: 1 byte per pixel
-        pixel_data_size = combined
-        height = math.floor(combined / width)
+    if EFFECT_EDITOR.file_data and #EFFECT_EDITOR.file_data > 0 then
+        -- Read texture header bytes from file data
+        local data = EFFECT_EDITOR.file_data
+        low = MemUtils.buf_read8(data, texture_offset + 0x400)
+        mid = MemUtils.buf_read8(data, texture_offset + 0x401)
+        high = MemUtils.buf_read8(data, texture_offset + 0x402)
+        depth_flag = MemUtils.buf_read8(data, texture_offset + 0x403)
+    elseif EFFECT_EDITOR.memory_base and EFFECT_EDITOR.memory_base >= 0x80000000 then
+        -- Fall back to reading from PSX memory
+        MemUtils.refresh_mem()
+        local base = EFFECT_EDITOR.memory_base
+        low = MemUtils.read8(base + texture_offset + 0x400)
+        mid = MemUtils.read8(base + texture_offset + 0x401)
+        high = MemUtils.read8(base + texture_offset + 0x402)
+        depth_flag = MemUtils.read8(base + texture_offset + 0x403)
     else
-        -- 4bpp: not supported
-        pixel_data_size = combined
-        height = math.floor(combined / width)
-    end
-
-    if pixel_data_size <= 0 or height <= 0 then
         return nil
     end
 
-    return width, height, pixel_data_size
+    -- The 24-bit combined value is total pixel data size in bytes
+    -- Note: mid_byte is NOT the width - it's part of the 24-bit size value
+    local pixel_count = low + mid * 256 + high * 65536
+
+    if pixel_count <= 0 then
+        return nil
+    end
+
+    local width, height
+
+    if depth_flag ~= 0 then
+        -- Custom indexed format: 1 byte = 1 pixel (low nibble=color, high nibble=sub-palette)
+        width = 256
+        height = math.floor(pixel_count / 256)
+    else
+        -- 8bpp: Determine width based on pixel count
+        -- Large textures (>=65536 bytes) like Ramuh are 256 wide
+        -- Standard textures are 128 wide
+        if pixel_count >= 65536 then
+            width = 256
+        else
+            width = 128
+        end
+        height = math.floor(pixel_count / width)
+    end
+
+    if height <= 0 then
+        return nil
+    end
+
+    return width, height, pixel_count
 end
 
 --------------------------------------------------------------------------------
@@ -217,7 +229,7 @@ end
 
 -- Check if texture export is available for current session
 function M.can_export_texture()
-    return is_8bpp_texture() and EFFECT_EDITOR.session_name and EFFECT_EDITOR.session_name ~= ""
+    return is_exportable_texture() and EFFECT_EDITOR.session_name and EFFECT_EDITOR.session_name ~= ""
 end
 
 -- Export current effect texture to RGBA TGA file
@@ -233,52 +245,91 @@ function M.export_texture_to_bmp()
         return false, "No session loaded"
     end
 
-    if not EFFECT_EDITOR.file_data or #EFFECT_EDITOR.file_data == 0 then
-        logging.log_error("No effect file data loaded - cannot export texture")
-        return false, "No file data"
-    end
-
     if not EFFECT_EDITOR.header or not EFFECT_EDITOR.header.texture_ptr then
         logging.log_error("No effect header - cannot export texture")
         return false, "No header"
     end
 
-    local data = EFFECT_EDITOR.file_data
     local texture_offset = EFFECT_EDITOR.header.texture_ptr
+    local has_file_data = EFFECT_EDITOR.file_data and #EFFECT_EDITOR.file_data > 0
+    local has_memory = EFFECT_EDITOR.memory_base and EFFECT_EDITOR.memory_base >= 0x80000000
 
-    -- Check depth flag from file data
-    local depth_flag = MemUtils.buf_read8(data, texture_offset + 0x403)
-
-    if depth_flag ~= 0 then
-        logging.log_error("Cannot export 4bpp texture - only 8bpp supported")
-        return false, "4bpp textures not supported"
+    if not has_file_data and not has_memory then
+        logging.log_error("No file data or memory base - cannot export texture")
+        return false, "No data source"
     end
 
-    -- Get dimensions from file data
-    local width, height, pixel_size = get_texture_dimensions_from_file()
+    -- Check depth flag (0 = 8bpp, non-zero = 4bpp)
+    local depth_flag
+    if has_file_data then
+        depth_flag = MemUtils.buf_read8(EFFECT_EDITOR.file_data, texture_offset + 0x403)
+    else
+        MemUtils.refresh_mem()
+        depth_flag = MemUtils.read8(EFFECT_EDITOR.memory_base + texture_offset + 0x403)
+    end
+
+    local is_4bpp = depth_flag ~= 0
+
+    -- Get dimensions
+    local width, height, pixel_size = get_texture_dimensions()
     if not width then
         logging.log_error("Could not determine texture dimensions")
         return false, "Invalid texture dimensions"
     end
 
-    logging.log(string.format("Exporting texture: %dx%d (%d bytes) from .bin file", width, height, pixel_size))
+    local source_name = has_file_data and ".bin file" or "PSX memory"
+    local bpp_label = is_4bpp and "4bpp" or "8bpp"
+    logging.log(string.format("Exporting texture: %dx%d %s (%d bytes) from %s", width, height, bpp_label, pixel_size, source_name))
 
-    -- Read palette (512 bytes BGR555) from file data
-    local palette_data = data:sub(texture_offset + 1, texture_offset + 512)
+    local palette_data, pixels, pal0, pal1
+
+    if has_file_data then
+        local data = EFFECT_EDITOR.file_data
+        -- Read palette (512 bytes BGR555) from file data
+        palette_data = data:sub(texture_offset + 1, texture_offset + 512)
+        pal0 = MemUtils.buf_read16(data, texture_offset)
+        pal1 = MemUtils.buf_read16(data, texture_offset + 2)
+        -- Read pixel data from file
+        local pixel_offset = texture_offset + 0x404
+        pixels = data:sub(pixel_offset + 1, pixel_offset + pixel_size)
+    else
+        -- Read from PSX memory
+        MemUtils.refresh_mem()
+        local base = EFFECT_EDITOR.memory_base
+        local tex_addr = base + texture_offset
+
+        -- Read palette (512 bytes)
+        local pal_bytes = {}
+        for i = 0, 511 do
+            pal_bytes[i + 1] = string.char(MemUtils.read8(tex_addr + i))
+        end
+        palette_data = table.concat(pal_bytes)
+
+        pal0 = MemUtils.read16(tex_addr)
+        pal1 = MemUtils.read16(tex_addr + 2)
+
+        -- Read pixel data from memory
+        local pixel_addr = tex_addr + 0x404
+        local pix_bytes = {}
+        for i = 0, pixel_size - 1 do
+            pix_bytes[i + 1] = string.char(MemUtils.read8(pixel_addr + i))
+        end
+        pixels = table.concat(pix_bytes)
+    end
 
     -- Debug: show first palette entries with STP bits
-    local pal0 = MemUtils.buf_read16(data, texture_offset)
-    local pal1 = MemUtils.buf_read16(data, texture_offset + 2)
     local stp0 = bit.band(pal0, 0x8000) ~= 0 and 1 or 0
     local stp1 = bit.band(pal1, 0x8000) ~= 0 and 1 or 0
-    print(string.format("[TEXTURE] palette[0]=0x%04X (STP=%d) palette[1]=0x%04X (STP=%d)", pal0, stp0, pal1, stp1))
-
-    -- Read pixel data from file
-    local pixel_offset = texture_offset + 0x404
-    local pixels = data:sub(pixel_offset + 1, pixel_offset + pixel_size)
+    local bpp_str = is_4bpp and "4bpp" or "8bpp"
+    print(string.format("[TEXTURE] %s palette[0]=0x%04X (STP=%d) palette[1]=0x%04X (STP=%d)", bpp_str, pal0, stp0, pal1, stp1))
 
     -- Convert to RGBA pixels with alpha from STP bits
-    local rgba_pixels = bmp.psx_texture_to_rgba_pixels(palette_data, width, height, pixels)
+    local rgba_pixels
+    if is_4bpp then
+        rgba_pixels = bmp.psx_texture_to_rgba_pixels_4bpp(palette_data, width, height, pixels)
+    else
+        rgba_pixels = bmp.psx_texture_to_rgba_pixels(palette_data, width, height, pixels)
+    end
 
     -- Ensure texture directory exists
     local texture_dir = get_texture_dir()
@@ -299,11 +350,11 @@ function M.export_texture_to_bmp()
     EFFECT_EDITOR.texture_height = height
 
     logging.log(string.format("Texture exported to: %s", tga_path))
-    EFFECT_EDITOR.status_msg = string.format("Texture exported (%dx%d)", width, height)
+    EFFECT_EDITOR.status_msg = string.format("Texture exported (%dx%d %s)", width, height, bpp_label)
 
     print("")
     print(string.format("Texture exported to: %s", tga_path))
-    print(string.format("  Dimensions: %d x %d", width, height))
+    print(string.format("  Dimensions: %d x %d (%s)", width, height, bpp_label))
     print("  Format: 32-bit RGBA TGA")
     print("")
     print("  STP (Semi-Transparency) is encoded in the ALPHA channel:")
@@ -560,21 +611,32 @@ function M.get_texture_status()
         if not EFFECT_EDITOR.file_data or #EFFECT_EDITOR.file_data == 0 then
             return "no file data"
         end
-        -- Check depth flag from file data
-        local texture_offset = EFFECT_EDITOR.header.texture_ptr
-        local depth_flag = MemUtils.buf_read8(EFFECT_EDITOR.file_data, texture_offset + 0x403)
-        if depth_flag ~= 0 then
-            return "4bpp (unsupported)"
-        end
         return "unavailable"
     end
 
-    local width, height = get_texture_dimensions_from_file()
-    if width and height then
-        return string.format("%dx%d 8bpp", width, height)
+    local width, height = get_texture_dimensions()
+
+    -- Determine if 4bpp or 8bpp
+    local bpp = "8bpp"
+    if EFFECT_EDITOR.header and EFFECT_EDITOR.header.texture_ptr then
+        local texture_offset = EFFECT_EDITOR.header.texture_ptr
+        local depth_flag
+        if EFFECT_EDITOR.file_data and #EFFECT_EDITOR.file_data > 0 then
+            depth_flag = MemUtils.buf_read8(EFFECT_EDITOR.file_data, texture_offset + 0x403)
+        elseif EFFECT_EDITOR.memory_base and EFFECT_EDITOR.memory_base >= 0x80000000 then
+            MemUtils.refresh_mem()
+            depth_flag = MemUtils.read8(EFFECT_EDITOR.memory_base + texture_offset + 0x403)
+        end
+        if depth_flag and depth_flag ~= 0 then
+            bpp = "4bpp"
+        end
     end
 
-    return "8bpp"
+    if width and height then
+        return string.format("%dx%d %s", width, height, bpp)
+    end
+
+    return bpp
 end
 
 return M

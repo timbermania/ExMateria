@@ -57,9 +57,33 @@ local function write_memory(addr, value, field_type)
     end
 end
 
+-- Read a field using reader abstraction (unified buffer/memory)
+local function read_from_reader(reader, offset, field_type)
+    if field_type == "u8" then
+        return reader.read8(offset)
+    elseif field_type == "s16" then
+        return reader.read16s(offset)
+    elseif field_type == "u16" then
+        return reader.read16(offset)
+    elseif field_type == "s32" or field_type == "u32" then
+        return reader.read32(offset)
+    else
+        error("Unknown field type: " .. tostring(field_type))
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Generic Schema Functions
 --------------------------------------------------------------------------------
+
+-- Parse an object using reader abstraction (unified buffer/memory)
+function M.parse_from_reader(schema, reader)
+    local obj = {}
+    for _, field in ipairs(schema) do
+        obj[field.name] = read_from_reader(reader, field.offset, field.type)
+    end
+    return obj
+end
 
 -- Parse an object from buffer data using a schema
 function M.parse_from_buffer(schema, data, offset)

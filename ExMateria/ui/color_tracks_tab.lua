@@ -8,11 +8,9 @@ local M = {}
 -- Dependencies (will be injected)
 --------------------------------------------------------------------------------
 
-local apply_all_edits_fn = nil
 local helpers = nil
 
-function M.set_dependencies(apply_all_edits, helpers_mod)
-    apply_all_edits_fn = apply_all_edits
+function M.set_dependencies(helpers_mod)
     helpers = helpers_mod
 end
 
@@ -511,16 +509,7 @@ function M.draw()
         return
     end
 
-    -- Apply All button
-    if imgui.Button("Apply All to Memory##color_tracks") then
-        if apply_all_edits_fn then
-            apply_all_edits_fn()
-        end
-    end
-    imgui.SameLine()
-    imgui.TextUnformatted(string.format("(%d tracks loaded)", #EFFECT_EDITOR.color_tracks))
-
-    imgui.Separator()
+    imgui.TextUnformatted(string.format("%d tracks loaded", #EFFECT_EDITOR.color_tracks))
 
     -- Help section (collapsed by default)
     draw_help_section()

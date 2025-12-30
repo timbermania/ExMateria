@@ -8,12 +8,10 @@ local M = {}
 -- Dependencies (will be injected)
 --------------------------------------------------------------------------------
 
-local apply_all_edits_fn = nil
 local add_timing_section_fn = nil
 local remove_timing_section_fn = nil
 
-function M.set_dependencies(apply_all_edits, add_timing_section, remove_timing_section)
-    apply_all_edits_fn = apply_all_edits
+function M.set_dependencies(add_timing_section, remove_timing_section)
     add_timing_section_fn = add_timing_section
     remove_timing_section_fn = remove_timing_section
 end
@@ -599,20 +597,6 @@ end
 --------------------------------------------------------------------------------
 
 local function draw_action_buttons()
-    local can_apply = EFFECT_EDITOR.memory_base and EFFECT_EDITOR.memory_base >= 0x80000000
-
-    if can_apply then
-        if imgui.Button("Apply All to Memory##time_scale") then
-            if apply_all_edits_fn then
-                apply_all_edits_fn()
-            end
-        end
-    else
-        imgui.TextUnformatted("(Apply to Memory - no target)")
-    end
-
-    imgui.SameLine()
-
     -- Reset to original
     if imgui.Button("Reset to Original##time_scale") then
         if EFFECT_EDITOR.original_timing_curves then

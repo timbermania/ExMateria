@@ -518,16 +518,12 @@ end
 --------------------------------------------------------------------------------
 
 local function draw_action_buttons()
-    -- Apply to memory
+    -- Apply single curve to memory (quick iteration on one curve)
     local can_apply = EFFECT_EDITOR.memory_base and EFFECT_EDITOR.memory_base >= 0x80000000
 
     if can_apply then
         if imgui.Button("Apply This Curve##curve") then
             memory_ops.apply_single_curve_to_memory(ui_state.selected_curve)
-        end
-        imgui.SameLine()
-        if imgui.Button("Apply All##all") then
-            memory_ops.apply_all_edits_to_memory()
         end
     else
         imgui.TextUnformatted("(Apply to Memory - no target)")

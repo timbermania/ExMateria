@@ -149,16 +149,16 @@ memory_ops.set_dependencies(MemUtils, Parser, config, logging.log, logging.log_v
 capture.on_capture_callback = memory_ops.load_from_memory_internal
 
 -- Set up UI modules
-particles_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory, Parser)
-header_tab.set_dependencies(memory_ops.apply_all_edits_to_memory)
-timeline_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory)
-camera_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, helpers)
-color_tracks_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, helpers)
-time_scale_tab.set_dependencies(memory_ops.apply_all_edits_to_memory, memory_ops.add_timing_curve_section, memory_ops.remove_timing_curve_section)
-sound_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory, Parser)
-script_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory, Parser)
-frames_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory, Parser, bmp, config)
-sequences_tab.set_dependencies(helpers, memory_ops.apply_all_edits_to_memory, Parser)
+particles_tab.set_dependencies(helpers, Parser)
+-- header_tab has no dependencies
+timeline_tab.set_dependencies(helpers)
+camera_tab.set_dependencies(helpers)
+color_tracks_tab.set_dependencies(helpers)
+time_scale_tab.set_dependencies(memory_ops.add_timing_curve_section, memory_ops.remove_timing_curve_section)
+sound_tab.set_dependencies(helpers, Parser)
+script_tab.set_dependencies(helpers, Parser)
+frames_tab.set_dependencies(helpers, Parser, bmp, config)
+sequences_tab.set_dependencies(helpers, Parser, workflow.ee_test, session.ee_load_session, memory_ops.apply_all_edits_to_memory)
 load_panel.set_dependencies(memory_ops.load_effect_file, capture.arm_capture, capture.disarm_capture)
 session_list.set_dependencies(session.ee_load_session, session.ee_delete, session.ee_refresh_sessions)
 save_panel.set_dependencies(config, savestate.ee_raw_save, savestate.ee_save_bin_edited,
@@ -167,10 +167,15 @@ save_panel.set_dependencies(config, savestate.ee_raw_save, savestate.ee_save_bin
 curves_tab.set_dependencies(curve_canvas, curve_generators, MemUtils, Parser, memory_ops)
 main_window.set_dependencies(load_panel, save_panel, structure_tab, particles_tab, curves_tab, header_tab, timeline_tab, camera_tab, color_tracks_tab, time_scale_tab, sound_tab, script_tab, frames_tab, sequences_tab, settings_tab, workflow.ee_test, savestate.ee_save_bin_edited, session.ee_load_session, texture_ops)
 
+-- Register reload callbacks
+EFFECT_EDITOR.on_reload_callbacks = EFFECT_EDITOR.on_reload_callbacks or {}
+table.insert(EFFECT_EDITOR.on_reload_callbacks, sequences_tab.clear_preview_state)
+
 -- Set up command modules (all use unified apply_all_edits_to_memory)
 workflow.set_dependencies(config, logging, MemUtils, memory_ops.apply_all_edits_to_memory, savestate.ee_reload, texture_ops)
 file_ops.set_dependencies(config, logging, MemUtils, memory_ops.load_effect_file,
-                          memory_ops.load_from_memory, memory_ops.load_from_memory_internal)
+                          memory_ops.load_from_memory, memory_ops.load_from_memory_internal,
+                          session.ee_load_session)
 savestate.set_dependencies(config, logging, MemUtils, zlib_io,
                            memory_ops.apply_all_edits_to_memory, session.ee_refresh_sessions, texture_ops)
 session.set_dependencies(config, logging, MemUtils, Parser, savestate.ee_reload,
@@ -201,6 +206,7 @@ ee_set_mem = file_ops.ee_set_mem
 ee_save_bin = file_ops.ee_save_bin
 ee_load_bin = file_ops.ee_load_bin
 ee_delete_bin = file_ops.ee_delete_bin
+ee_import_bin = file_ops.ee_import_bin
 
 -- Savestate commands
 ee_save = savestate.ee_save
@@ -230,6 +236,7 @@ ee_status = debug_cmds.ee_status
 ee_arm = debug_cmds.ee_arm
 ee_disarm = debug_cmds.ee_disarm
 ee_regression_dump = debug_cmds.ee_regression_dump
+ee_debug_sections = memory_ops.debug_sections
 
 -- Texture commands
 ee_texture_dump = texture_ops.debug_dump_texture

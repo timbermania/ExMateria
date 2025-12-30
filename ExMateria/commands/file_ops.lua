@@ -15,14 +15,16 @@ local MemUtils = nil
 local load_effect_file_fn = nil
 local load_from_memory_fn = nil
 local load_from_memory_internal_fn = nil
+local ee_load_session_fn = nil
 
-function M.set_dependencies(cfg, log_module, mem_utils, load_effect_fn, load_mem_fn, load_mem_internal_fn)
+function M.set_dependencies(cfg, log_module, mem_utils, load_effect_fn, load_mem_fn, load_mem_internal_fn, load_session_fn)
     config = cfg
     logging = log_module
     MemUtils = mem_utils
     load_effect_file_fn = load_effect_fn
     load_from_memory_fn = load_mem_fn
     load_from_memory_internal_fn = load_mem_internal_fn
+    ee_load_session_fn = load_session_fn
 end
 
 --------------------------------------------------------------------------------
@@ -203,6 +205,59 @@ function M.ee_delete_bin(name)
         return true
     else
         logging.log_error(string.format("Could not delete '%s': %s", name, tostring(err)))
+        return false
+    end
+end
+
+--------------------------------------------------------------------------------
+-- ee_import_bin: Import external .bin file into current session
+--------------------------------------------------------------------------------
+
+function M.ee_import_bin(path)
+    -- Validate active session
+    local session_name = EFFECT_EDITOR.session_name
+    if not session_name or session_name == "" then
+        logging.log_error("No active session. Load a session first with ee_load_session('name')")
+        return false
+    end
+
+    if not path or path == "" then
+        logging.log_error("Usage: ee_import_bin('/path/to/E###.BIN')")
+        return false
+    end
+
+    -- Read source file
+    local src_file = io.open(path, "rb")
+    if not src_file then
+        logging.log_error("Could not open: " .. path)
+        return false
+    end
+    local data = src_file:read("*all")
+    src_file:close()
+
+    if not data or #data == 0 then
+        logging.log_error("File is empty: " .. path)
+        return false
+    end
+
+    -- Write to session's bin path
+    local dst_path = config.EFFECT_BINS_PATH .. session_name .. ".bin"
+    local dst_file = io.open(dst_path, "wb")
+    if not dst_file then
+        logging.log_error("Could not write to: " .. dst_path)
+        return false
+    end
+    dst_file:write(data)
+    dst_file:close()
+
+    logging.log(string.format("Imported %d bytes from %s to session '%s'", #data, path, session_name))
+    EFFECT_EDITOR.status_msg = string.format("Imported: %s", path:match("([^/\\]+)$") or path)
+
+    -- Reload session (parses new bin, applies to memory)
+    if ee_load_session_fn then
+        return ee_load_session_fn(session_name)
+    else
+        logging.log_error("ee_load_session not available")
         return false
     end
 end

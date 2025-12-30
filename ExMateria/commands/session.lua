@@ -114,7 +114,7 @@ function M.ee_load_session(name)
                             -- Parse frames section from .bin data
                             if Parser.parse_frames_section_from_data then
                                 local frames_section_size = EFFECT_EDITOR.header.animation_ptr - EFFECT_EDITOR.header.frames_ptr
-                                EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count = Parser.parse_frames_section_from_data(
+                                EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count = Parser.parse_frames_section_from_data(
                                     bin_data,
                                     EFFECT_EDITOR.header.frames_ptr,
                                     frames_section_size
@@ -124,8 +124,8 @@ function M.ee_load_session(name)
                                 for _, fs in ipairs(EFFECT_EDITOR.framesets or {}) do
                                     total_frames = total_frames + #fs.frames
                                 end
-                                logging.log(string.format("  Parsed %d framesets (%d total frames), %d groups from .bin",
-                                    #(EFFECT_EDITOR.framesets or {}), total_frames, EFFECT_EDITOR.frames_group_count or 0))
+                                logging.log(string.format("  Parsed %d framesets (%d total frames), %d groups, %d offset table entries from .bin",
+                                    #(EFFECT_EDITOR.framesets or {}), total_frames, EFFECT_EDITOR.frames_group_count or 0, EFFECT_EDITOR.frames_offset_table_count or 0))
                             else
                                 logging.log("  Frames parsing functions not available")
                             end

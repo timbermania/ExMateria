@@ -7,11 +7,9 @@ local M = {}
 -- Dependencies (will be injected)
 --------------------------------------------------------------------------------
 
-local apply_all_edits_fn = nil
 local helpers = nil
 
-function M.set_dependencies(apply_all_edits, helpers_mod)
-    apply_all_edits_fn = apply_all_edits
+function M.set_dependencies(helpers_mod)
     helpers = helpers_mod
 end
 
@@ -277,21 +275,6 @@ function M.draw()
         imgui.TextUnformatted("Load an effect file to edit camera keyframes.")
         return
     end
-
-    -- Apply to Memory button at top
-    if EFFECT_EDITOR.memory_base >= 0x80000000 then
-        if imgui.Button("Apply All to Memory##camera") then
-            if apply_all_edits_fn then
-                apply_all_edits_fn()
-            end
-        end
-        imgui.SameLine()
-        imgui.TextUnformatted(string.format("(Target: 0x%08X)", EFFECT_EDITOR.memory_base))
-    else
-        imgui.TextUnformatted("Set memory base address to enable Apply to Memory")
-    end
-
-    imgui.Separator()
 
     -- Help section
     if imgui.CollapsingHeader("Camera Timeline Help") then

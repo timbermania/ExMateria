@@ -8,12 +8,10 @@ local M = {}
 --------------------------------------------------------------------------------
 
 local helpers = nil
-local apply_all_edits_fn = nil
 local Parser = nil
 
-function M.set_dependencies(helpers_module, apply_all_edits, parser_module)
+function M.set_dependencies(helpers_module, parser_module)
     helpers = helpers_module
-    apply_all_edits_fn = apply_all_edits
     Parser = parser_module
 end
 
@@ -22,33 +20,6 @@ end
 --------------------------------------------------------------------------------
 
 local clone_source_index = 0  -- 0-indexed emitter to clone when adding
-
---------------------------------------------------------------------------------
--- Local Helper (uses injected helpers module)
---------------------------------------------------------------------------------
-
-local function slider_int16(label, value, min, max, width)
-    return helpers.slider_int16(label, value, min, max, width)
-end
-
---------------------------------------------------------------------------------
--- Nibble Helpers for Curve Indices
---------------------------------------------------------------------------------
-
--- Extract low nibble (bits 0-3) from byte
-local function get_low_nibble(byte)
-    return byte % 16
-end
-
--- Extract high nibble (bits 4-7) from byte
-local function get_high_nibble(byte)
-    return math.floor(byte / 16)
-end
-
--- Pack two nibbles into one byte
-local function pack_nibbles(low, high)
-    return (low % 16) + (high % 16) * 16
-end
 
 --------------------------------------------------------------------------------
 -- Curve Selector Widget
@@ -67,15 +38,15 @@ local HOMING_CURVE_ITEMS = "None\0001\0002\0003\0004\0"
 -- uid: unique id suffix for imgui
 local function curve_selector(label, emitter, byte_field, is_high_nibble, uid)
     local byte_val = emitter[byte_field]
-    local current = is_high_nibble and get_high_nibble(byte_val) or get_low_nibble(byte_val)
+    local current = is_high_nibble and helpers.get_high_nibble(byte_val) or helpers.get_low_nibble(byte_val)
 
     imgui.SetNextItemWidth(60)
     local changed, new_val = imgui.Combo(label .. "##curve" .. uid, current, CURVE_ITEMS)
     if changed then
         if is_high_nibble then
-            emitter[byte_field] = pack_nibbles(get_low_nibble(byte_val), new_val)
+            emitter[byte_field] = helpers.pack_nibbles(helpers.get_low_nibble(byte_val), new_val)
         else
-            emitter[byte_field] = pack_nibbles(new_val, get_high_nibble(byte_val))
+            emitter[byte_field] = helpers.pack_nibbles(new_val, helpers.get_high_nibble(byte_val))
         end
     end
     return changed
@@ -91,31 +62,13 @@ function M.draw()
         return
     end
 
-    -- Apply to Memory button at top
-    if EFFECT_EDITOR.memory_base >= 0x80000000 then
-        if imgui.Button("Apply All to Memory") then
-            if apply_all_edits_fn then
-                apply_all_edits_fn()
-            end
-        end
-        imgui.SameLine()
-        imgui.TextUnformatted(string.format("(Target: 0x%08X)", EFFECT_EDITOR.memory_base))
-    else
-        imgui.TextUnformatted("Set memory base address to enable Apply to Memory")
-        imgui.SameLine()
-        local changed, new_val = imgui.extra.InputText("##mem_base", string.format("%08X", EFFECT_EDITOR.memory_base))
-        if changed then
-            EFFECT_EDITOR.memory_base = tonumber(new_val, 16) or 0
-        end
-    end
-
     -- Structure change warning
     if EFFECT_EDITOR.original_emitter_count and
        #EFFECT_EDITOR.emitters ~= EFFECT_EDITOR.original_emitter_count then
         imgui.Separator()
         imgui.TextUnformatted(string.format("** STRUCTURE MODIFIED: %d -> %d emitters **",
             EFFECT_EDITOR.original_emitter_count, #EFFECT_EDITOR.emitters))
-        imgui.TextUnformatted("Click 'Apply All to Memory' to commit changes")
+        imgui.TextUnformatted("Run Test Cycle to apply changes")
     end
 
     imgui.Separator()
@@ -375,18 +328,18 @@ function M.draw_position(e, i)
 
         imgui.Separator()
         local c, v
-        c, v = slider_int16("Start X##pos" .. i, e.start_position_x, -200, 200)
+        c, v = helpers.slider_int16("Start X##pos" .. i, e.start_position_x, -500, 500)
         if c then e.start_position_x = v end
-        c, v = slider_int16("Start Y##pos" .. i, e.start_position_y, -200, 200)
+        c, v = helpers.slider_int16("Start Y##pos" .. i, e.start_position_y, -500, 500)
         if c then e.start_position_y = v end
-        c, v = slider_int16("Start Z##pos" .. i, e.start_position_z, -200, 200)
+        c, v = helpers.slider_int16("Start Z##pos" .. i, e.start_position_z, -500, 500)
         if c then e.start_position_z = v end
 
-        c, v = slider_int16("End X##pos" .. i, e.end_position_x, -200, 200)
+        c, v = helpers.slider_int16("End X##pos" .. i, e.end_position_x, -500, 500)
         if c then e.end_position_x = v end
-        c, v = slider_int16("End Y##pos" .. i, e.end_position_y, -200, 200)
+        c, v = helpers.slider_int16("End Y##pos" .. i, e.end_position_y, -500, 500)
         if c then e.end_position_y = v end
-        c, v = slider_int16("End Z##pos" .. i, e.end_position_z, -200, 200)
+        c, v = helpers.slider_int16("End Z##pos" .. i, e.end_position_z, -500, 500)
         if c then e.end_position_z = v end
 
         imgui.TreePop()
@@ -412,18 +365,18 @@ function M.draw_spread(e, i)
 
         imgui.Separator()
         local c, v
-        c, v = slider_int16("Start X##spread" .. i, e.spread_x_start, 0, 200)
+        c, v = helpers.slider_int16("Start X##spread" .. i, e.spread_x_start, 0, 200)
         if c then e.spread_x_start = v end
-        c, v = slider_int16("Start Y##spread" .. i, e.spread_y_start, 0, 200)
+        c, v = helpers.slider_int16("Start Y##spread" .. i, e.spread_y_start, 0, 200)
         if c then e.spread_y_start = v end
-        c, v = slider_int16("Start Z##spread" .. i, e.spread_z_start, 0, 200)
+        c, v = helpers.slider_int16("Start Z##spread" .. i, e.spread_z_start, 0, 200)
         if c then e.spread_z_start = v end
 
-        c, v = slider_int16("End X##spread" .. i, e.spread_x_end, 0, 200)
+        c, v = helpers.slider_int16("End X##spread" .. i, e.spread_x_end, 0, 200)
         if c then e.spread_x_end = v end
-        c, v = slider_int16("End Y##spread" .. i, e.spread_y_end, 0, 200)
+        c, v = helpers.slider_int16("End Y##spread" .. i, e.spread_y_end, 0, 200)
         if c then e.spread_y_end = v end
-        c, v = slider_int16("End Z##spread" .. i, e.spread_z_end, 0, 200)
+        c, v = helpers.slider_int16("End Z##spread" .. i, e.spread_z_end, 0, 200)
         if c then e.spread_z_end = v end
 
         imgui.TreePop()
@@ -460,33 +413,33 @@ function M.draw_velocity(e, i)
         imgui.Separator()
         local c, v
         imgui.TextUnformatted("Base Angles (±7 rotations):")
-        c, v = slider_int16("X Start##vba" .. i, e.velocity_base_angle_x_start, -28672, 28672)
+        c, v = helpers.slider_int16("X Start##vba" .. i, e.velocity_base_angle_x_start, -28672, 28672)
         if c then e.velocity_base_angle_x_start = v end
-        c, v = slider_int16("Y Start##vba" .. i, e.velocity_base_angle_y_start, -28672, 28672)
+        c, v = helpers.slider_int16("Y Start##vba" .. i, e.velocity_base_angle_y_start, -28672, 28672)
         if c then e.velocity_base_angle_y_start = v end
-        c, v = slider_int16("Z Start##vba" .. i, e.velocity_base_angle_z_start, -28672, 28672)
+        c, v = helpers.slider_int16("Z Start##vba" .. i, e.velocity_base_angle_z_start, -28672, 28672)
         if c then e.velocity_base_angle_z_start = v end
 
-        c, v = slider_int16("X End##vba" .. i, e.velocity_base_angle_x_end, -28672, 28672)
+        c, v = helpers.slider_int16("X End##vba" .. i, e.velocity_base_angle_x_end, -28672, 28672)
         if c then e.velocity_base_angle_x_end = v end
-        c, v = slider_int16("Y End##vba" .. i, e.velocity_base_angle_y_end, -28672, 28672)
+        c, v = helpers.slider_int16("Y End##vba" .. i, e.velocity_base_angle_y_end, -28672, 28672)
         if c then e.velocity_base_angle_y_end = v end
-        c, v = slider_int16("Z End##vba" .. i, e.velocity_base_angle_z_end, -28672, 28672)
+        c, v = helpers.slider_int16("Z End##vba" .. i, e.velocity_base_angle_z_end, -28672, 28672)
         if c then e.velocity_base_angle_z_end = v end
 
         imgui.TextUnformatted("Direction Spread (cone 0-360°):")
-        c, v = slider_int16("X Start##vds" .. i, e.velocity_direction_spread_x_start, 0, 4096)
+        c, v = helpers.slider_int16("X Start##vds" .. i, e.velocity_direction_spread_x_start, 0, 4096)
         if c then e.velocity_direction_spread_x_start = v end
-        c, v = slider_int16("Y Start##vds" .. i, e.velocity_direction_spread_y_start, 0, 4096)
+        c, v = helpers.slider_int16("Y Start##vds" .. i, e.velocity_direction_spread_y_start, 0, 4096)
         if c then e.velocity_direction_spread_y_start = v end
-        c, v = slider_int16("Z Start##vds" .. i, e.velocity_direction_spread_z_start, 0, 4096)
+        c, v = helpers.slider_int16("Z Start##vds" .. i, e.velocity_direction_spread_z_start, 0, 4096)
         if c then e.velocity_direction_spread_z_start = v end
 
-        c, v = slider_int16("X End##vds" .. i, e.velocity_direction_spread_x_end, 0, 4096)
+        c, v = helpers.slider_int16("X End##vds" .. i, e.velocity_direction_spread_x_end, 0, 4096)
         if c then e.velocity_direction_spread_x_end = v end
-        c, v = slider_int16("Y End##vds" .. i, e.velocity_direction_spread_y_end, 0, 4096)
+        c, v = helpers.slider_int16("Y End##vds" .. i, e.velocity_direction_spread_y_end, 0, 4096)
         if c then e.velocity_direction_spread_y_end = v end
-        c, v = slider_int16("Z End##vds" .. i, e.velocity_direction_spread_z_end, 0, 4096)
+        c, v = helpers.slider_int16("Z End##vds" .. i, e.velocity_direction_spread_z_end, 0, 4096)
         if c then e.velocity_direction_spread_z_end = v end
 
         -- Radial Velocity (moved from Physics)
@@ -498,15 +451,15 @@ function M.draw_velocity(e, i)
         local rv_min_end_disp = e.radial_velocity_min_end == 65535 and -1 or e.radial_velocity_min_end
         local rv_max_end_disp = e.radial_velocity_max_end == 65535 and -1 or e.radial_velocity_max_end
 
-        c, v = slider_int16("Min Start##radvel" .. i, rv_min_start_disp, -1, 5000, SLIDER_WIDTH_PAIR)
+        c, v = helpers.slider_int16("Min Start##radvel" .. i, rv_min_start_disp, -1, 5000, SLIDER_WIDTH_PAIR)
         if c then e.radial_velocity_min_start = (v == -1) and 65535 or v end
         imgui.SameLine()
-        c, v = slider_int16("Max Start##radvel" .. i, rv_max_start_disp, -1, 5000, SLIDER_WIDTH_PAIR)
+        c, v = helpers.slider_int16("Max Start##radvel" .. i, rv_max_start_disp, -1, 5000, SLIDER_WIDTH_PAIR)
         if c then e.radial_velocity_max_start = (v == -1) and 65535 or v end
-        c, v = slider_int16("Min End##radvel" .. i, rv_min_end_disp, -1, 5000, SLIDER_WIDTH_PAIR)
+        c, v = helpers.slider_int16("Min End##radvel" .. i, rv_min_end_disp, -1, 5000, SLIDER_WIDTH_PAIR)
         if c then e.radial_velocity_min_end = (v == -1) and 65535 or v end
         imgui.SameLine()
-        c, v = slider_int16("Max End##radvel" .. i, rv_max_end_disp, -1, 5000, SLIDER_WIDTH_PAIR)
+        c, v = helpers.slider_int16("Max End##radvel" .. i, rv_max_end_disp, -1, 5000, SLIDER_WIDTH_PAIR)
         if c then e.radial_velocity_max_end = (v == -1) and 65535 or v end
 
         imgui.TreePop()
@@ -608,16 +561,16 @@ function M.draw_spawn(e, i)
 
         imgui.Separator()
         local c, v
-        c, v = slider_int16("Count Start##spawn" .. i, e.particle_count_start, 0, 30, SLIDER_WIDTH_PAIR)
+        c, v = helpers.slider_int16("Count Start##spawn" .. i, e.particle_count_start, 0, 30, SLIDER_WIDTH_PAIR)
         if c then e.particle_count_start = v end
         imgui.SameLine()
-        c, v = slider_int16("Count End##spawn" .. i, e.particle_count_end, 0, 30, SLIDER_WIDTH_PAIR)
+        c, v = helpers.slider_int16("Count End##spawn" .. i, e.particle_count_end, 0, 30, SLIDER_WIDTH_PAIR)
         if c then e.particle_count_end = v end
 
-        c, v = slider_int16("Interval Start##spawn" .. i, e.spawn_interval_start, 0, 100, SLIDER_WIDTH_PAIR)
+        c, v = helpers.slider_int16("Interval Start##spawn" .. i, e.spawn_interval_start, 0, 100, SLIDER_WIDTH_PAIR)
         if c then e.spawn_interval_start = v end
         imgui.SameLine()
-        c, v = slider_int16("Interval End##spawn" .. i, e.spawn_interval_end, 0, 100, SLIDER_WIDTH_PAIR)
+        c, v = helpers.slider_int16("Interval End##spawn" .. i, e.spawn_interval_end, 0, 100, SLIDER_WIDTH_PAIR)
         if c then e.spawn_interval_end = v end
 
         imgui.TreePop()
@@ -668,7 +621,7 @@ function M.draw_homing(e, i)
 
         imgui.Separator()
         helpers.draw_minmax_start_end("Homing Strength (0=simple physics)", e, "homing_strength", 0, 1000)
-        helpers.draw_xyz_start_end("Target Offset", e, "target_offset", -200, 200)
+        helpers.draw_xyz_start_end("Target Offset", e, "target_offset", -500, 500)
 
         imgui.TreePop()
     end
