@@ -589,7 +589,7 @@ end
 
 -- Generate 1-phase script padded to target size with NOPs
 -- This avoids structure changes when converting from 3-phase
-local function generate_padded_pattern2_script(target_size)
+local function generate_padded_1phase_script(target_size)
     -- 1-phase base script (30 bytes)
     local insts = {}
 
@@ -741,11 +741,11 @@ function M.enter_preview_mode(sequences)
 
     -- 3. Convert to 1-phase script (PADDED to avoid structure change)
     local original_script_size = get_current_script_size()
-    local new_script = generate_padded_pattern2_script(original_script_size)
+    local new_script = generate_padded_1phase_script(original_script_size)
     EFFECT_EDITOR.script_instructions = new_script
 
     -- 4. Configure for-each timeline channels (1-phase uses these)
-    Parser.configure_preview_timeline(num_enabled, EFFECT_EDITOR.timeline_channels, "pattern2")
+    Parser.configure_preview_timeline(num_enabled, EFFECT_EDITOR.timeline_channels, "1phase")
 
     -- 5. Configure for-each screen effect track (neutral: no tint, no gradient)
     Parser.configure_preview_screen_track(EFFECT_EDITOR.color_tracks)

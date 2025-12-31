@@ -32,7 +32,7 @@ local ui_state = {
 
 -- 1-phase: Single animation script (30 bytes)
 -- Uses for_each_phase_timeline_tick (opcode 40) for single-phase timeline
-local function generate_pattern2_script()
+local function generate_1phase_script()
     local insts = {}
 
     -- 0x00: set_texture_page
@@ -69,7 +69,7 @@ end
 
 -- 3-phase: Multi-target script with for-each spawning (62 bytes)
 -- Uses outer_phases_timeline_tick (opcode 41) for phase-1/phase-2 timeline
-local function generate_pattern1_script()
+local function generate_3phase_script()
     local insts = {}
 
     -- ROOT SCRIPT (0x00-0x22)
@@ -555,7 +555,7 @@ function M.draw()
 
         -- 1-phase button
         if imgui.Button("Convert to 1-phase (30 bytes)##p2") then
-            local new_script = generate_pattern2_script()
+            local new_script = generate_1phase_script()
             Parser.recalculate_script_offsets(new_script)
             EFFECT_EDITOR.script_instructions = new_script
             ui_state.selected_index = -1
@@ -566,7 +566,7 @@ function M.draw()
 
         -- 3-phase button
         if imgui.Button("Convert to 3-phase (62 bytes)##p1") then
-            local new_script = generate_pattern1_script()
+            local new_script = generate_3phase_script()
             Parser.recalculate_script_offsets(new_script)
             EFFECT_EDITOR.script_instructions = new_script
             ui_state.selected_index = -1

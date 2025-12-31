@@ -218,20 +218,20 @@ function M.ee_load_session(name)
                                 logging.log("  Color track parsing functions not available")
                             end
 
-                            -- Parse timing curves from .bin data
-                            if Parser.parse_timing_curves_from_data then
-                                EFFECT_EDITOR.timing_curves = Parser.parse_timing_curves_from_data(
+                            -- Parse time scales from .bin data
+                            if Parser.parse_time_scales_from_data then
+                                EFFECT_EDITOR.time_scales = Parser.parse_time_scales_from_data(
                                     bin_data,
-                                    EFFECT_EDITOR.header.timing_curve_ptr
+                                    EFFECT_EDITOR.header.time_scale_ptr
                                 )
-                                EFFECT_EDITOR.original_timing_curves = Parser.copy_timing_curves(EFFECT_EDITOR.timing_curves)
-                                if EFFECT_EDITOR.timing_curves then
-                                    logging.log("  Parsed timing curves from .bin")
+                                EFFECT_EDITOR.original_time_scales = Parser.copy_time_scales(EFFECT_EDITOR.time_scales)
+                                if EFFECT_EDITOR.time_scales then
+                                    logging.log("  Parsed time scales from .bin")
                                 else
-                                    logging.log("  No timing curves (timing_curve_ptr = 0)")
+                                    logging.log("  No time scales (time_scale_ptr = 0)")
                                 end
                             else
-                                logging.log("  Timing curve parsing functions not available")
+                                logging.log("  Time scale parsing functions not available")
                             end
 
                             -- Parse effect flags from .bin data

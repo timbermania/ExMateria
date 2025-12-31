@@ -40,7 +40,7 @@ end
 --   0x08: script_data_ptr (script section start)
 --   0x0C: effect_data_ptr (emitters section start)
 --   0x10: anim_table_ptr (curves section start)
---   0x14: timing_curve_ptr (optional, 0 if not present)
+--   0x14: time_scale_ptr (optional, 0 if not present)
 --   0x18: effect_flags_ptr
 --   0x1C: timeline_section_ptr
 --   0x20: sound_def_ptr
@@ -54,7 +54,7 @@ M.SECTION_SCHEMA = {
     {name = "script",        offset = 0x08, optional = false},
     {name = "effect_data",   offset = 0x0C, optional = false},  -- particle header + emitters
     {name = "anim_table",    offset = 0x10, optional = false},  -- animation curves
-    {name = "timing_curve",  offset = 0x14, optional = true},   -- 0 if not present
+    {name = "time_scale",  offset = 0x14, optional = true},   -- 0 if not present
     {name = "effect_flags",  offset = 0x18, optional = false},
     {name = "timeline",      offset = 0x1C, optional = false},
     {name = "sound_def",     offset = 0x20, optional = false},
@@ -116,8 +116,8 @@ end
 -- base: PSX memory base address (e.g., 0x801C2500)
 -- changes: table mapping section_name -> size_delta
 --          e.g., {effect_data = 196} means emitter section grew by 196 bytes
---          e.g., {timing_curve = 600} means adding 600-byte timing section
---          e.g., {timing_curve = -600} means removing timing section
+--          e.g., {time_scale = 600} means adding 600-byte time scale section
+--          e.g., {time_scale = -600} means removing time scale section
 -- header: EFFECT_EDITOR.header (will be updated in place)
 -- silent: suppress logging
 --
@@ -191,7 +191,7 @@ function M.apply_structure_changes(base, changes, header, silent)
     end
 
     -- Update header with new pointer values
-    -- For optional sections (like timing_curve): only update if memory had a non-zero value
+    -- For optional sections (like time_scale): only update if memory had a non-zero value
     -- This preserves header values from .bin when memory doesn't have the optional section
     for _, section in ipairs(M.SECTION_SCHEMA) do
         local new_ptr = mem_layout[section.name]
@@ -212,9 +212,9 @@ function M.apply_structure_changes(base, changes, header, silent)
     end
 
     -- Write updated pointers to memory
-    -- For optional sections (like timing_curve): only write if memory had a non-zero value
+    -- For optional sections (like time_scale): only write if memory had a non-zero value
     -- This preserves the "not present" state (ptr=0) for optional sections
-    -- The timing curve handler is responsible for adding/removing optional sections
+    -- The time scale handler is responsible for adding/removing optional sections
     for _, section in ipairs(M.SECTION_SCHEMA) do
         local new_ptr = mem_layout[section.name]
         -- For optional sections, only write if non-zero (section exists in memory)
@@ -262,17 +262,17 @@ function M.calculate_emitter_delta(base)
     return delta
 end
 
--- Calculate timing curve structure change
+-- Calculate time scale structure change
 -- Returns: delta (600 for add, -600 for remove, 0 for no change)
-function M.calculate_timing_curve_delta(base)
-    local mem_timing_curve_ptr = MemUtils.read32(base + 0x14)
-    local has_timing_in_memory = (mem_timing_curve_ptr ~= 0)
-    local wants_timing = (EFFECT_EDITOR.timing_curves ~= nil)
+function M.calculate_time_scale_delta(base)
+    local mem_time_scale_ptr = MemUtils.read32(base + 0x14)
+    local has_time_scale_in_memory = (mem_time_scale_ptr ~= 0)
+    local wants_time_scale = (EFFECT_EDITOR.time_scales ~= nil)
 
-    if wants_timing and not has_timing_in_memory then
-        return 600  -- Add timing section
-    elseif not wants_timing and has_timing_in_memory then
-        return -600  -- Remove timing section
+    if wants_time_scale and not has_time_scale_in_memory then
+        return 600  -- Add time scale section
+    elseif not wants_time_scale and has_time_scale_in_memory then
+        return -600  -- Remove time scale section
     end
 
     return 0

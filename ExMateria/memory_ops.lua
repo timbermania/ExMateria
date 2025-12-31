@@ -60,7 +60,7 @@ local function handle_structure_change(silent)
     -- Use StructureManager to apply the structure change
     -- This handles memory shifting and ALL downstream pointer updates
     -- When effect_data grows/shrinks, everything from anim_table onwards shifts
-    -- NOTE: Optional sections (timing_curve) are only updated if they exist in memory
+    -- NOTE: Optional sections (time_scale) are only updated if they exist in memory
     local changes = {effect_data = delta}
     StructureManager.apply_structure_changes(base, changes, header, silent)
 
@@ -81,15 +81,15 @@ local function handle_structure_change(silent)
 end
 
 --------------------------------------------------------------------------------
--- Timing Curve Structure Change (Add/Remove 600-byte section)
+-- Time Scale Structure Change (Add/Remove 600-byte section)
 --------------------------------------------------------------------------------
 
 local TIMING_SECTION_SIZE = 600  -- 0x258 bytes
 
--- Handle timing curve section addition/removal
+-- Handle time scale section addition/removal
 -- Returns true if structure was modified
 -- action: "add" or "remove"
-local function handle_timing_curve_structure_change(action, silent)
+local function handle_time_scale_structure_change(action, silent)
     local base = EFFECT_EDITOR.memory_base
     local header = EFFECT_EDITOR.header
 
@@ -99,21 +99,21 @@ local function handle_timing_curve_structure_change(action, silent)
     end
 
     -- Read current memory state
-    local mem_timing_curve_ptr = MemUtils.read32(base + 0x14)
+    local mem_time_scale_ptr = MemUtils.read32(base + 0x14)
     local mem_effect_flags_ptr = MemUtils.read32(base + 0x18)
     local mem_timeline_section_ptr = MemUtils.read32(base + 0x1C)
     local mem_sound_def_ptr = MemUtils.read32(base + 0x20)
     local mem_texture_ptr = MemUtils.read32(base + 0x24)
 
     if action == "add" then
-        -- Can only add if currently no timing curves
-        if mem_timing_curve_ptr ~= 0 then
-            if not silent then log("Timing curves section already exists") end
+        -- Can only add if currently no time scales
+        if mem_time_scale_ptr ~= 0 then
+            if not silent then log("Time scales section already exists") end
             return false
         end
 
         if not silent then
-            log("Adding timing curves section (600 bytes)...")
+            log("Adding time scales section (600 bytes)...")
             log(string.format("  Insert point: 0x%X (current effect_flags_ptr)", mem_effect_flags_ptr))
         end
 
@@ -129,59 +129,59 @@ local function handle_timing_curve_structure_change(action, silent)
         StructureManager.shift_memory_region(shift_start, shift_end, TIMING_SECTION_SIZE)
 
         -- Update header pointers
-        header.timing_curve_ptr = insert_point  -- New section goes here
+        header.time_scale_ptr = insert_point  -- New section goes here
         header.effect_flags_ptr = mem_effect_flags_ptr + TIMING_SECTION_SIZE
         header.timeline_section_ptr = mem_timeline_section_ptr + TIMING_SECTION_SIZE
         header.sound_def_ptr = mem_sound_def_ptr + TIMING_SECTION_SIZE
         header.texture_ptr = mem_texture_ptr + TIMING_SECTION_SIZE
 
         -- Write updated header to memory
-        MemUtils.write32(base + 0x14, header.timing_curve_ptr)
+        MemUtils.write32(base + 0x14, header.time_scale_ptr)
         MemUtils.write32(base + 0x18, header.effect_flags_ptr)
         MemUtils.write32(base + 0x1C, header.timeline_section_ptr)
         MemUtils.write32(base + 0x20, header.sound_def_ptr)
         MemUtils.write32(base + 0x24, header.texture_ptr)
 
         -- Initialize new section with default values (0x22 = value 2 for both nibbles = normal speed)
-        -- This will be overwritten by user's timing curve data if it exists
-        local timing_addr = base + header.timing_curve_ptr
+        -- This will be overwritten by user's time scale data if it exists
+        local timing_addr = base + header.time_scale_ptr
         for i = 0, TIMING_SECTION_SIZE - 1 do
             MemUtils.write8(timing_addr + i, 0x22)
         end
 
-        -- Only create default timing_curves data if it doesn't already exist
+        -- Only create default time_scales data if it doesn't already exist
         -- (preserves user's edits when re-adding section during apply_all_edits)
-        if not EFFECT_EDITOR.timing_curves then
-            EFFECT_EDITOR.timing_curves = {
+        if not EFFECT_EDITOR.time_scales then
+            EFFECT_EDITOR.time_scales = {
                 process_timeline = {},
                 animate_tick = {}
             }
             for i = 1, 600 do
-                EFFECT_EDITOR.timing_curves.process_timeline[i] = 2
-                EFFECT_EDITOR.timing_curves.animate_tick[i] = 2
+                EFFECT_EDITOR.time_scales.process_timeline[i] = 2
+                EFFECT_EDITOR.time_scales.animate_tick[i] = 2
             end
-            EFFECT_EDITOR.original_timing_curves = Parser.copy_timing_curves(EFFECT_EDITOR.timing_curves)
+            EFFECT_EDITOR.original_time_scales = Parser.copy_time_scales(EFFECT_EDITOR.time_scales)
         end
 
         if not silent then
-            log(string.format("  New timing_curve_ptr: 0x%X", header.timing_curve_ptr))
+            log(string.format("  New time_scale_ptr: 0x%X", header.time_scale_ptr))
             log(string.format("  New effect_flags_ptr: 0x%X", header.effect_flags_ptr))
             log(string.format("  New timeline_section_ptr: 0x%X", header.timeline_section_ptr))
-            log("  Timing curves section added successfully")
+            log("  Time scales section added successfully")
         end
 
         return true
 
     elseif action == "remove" then
-        -- Can only remove if timing curves exist
-        if mem_timing_curve_ptr == 0 then
-            if not silent then log("No timing curves section to remove") end
+        -- Can only remove if time scales exist
+        if mem_time_scale_ptr == 0 then
+            if not silent then log("No time scales section to remove") end
             return false
         end
 
         if not silent then
-            log("Removing timing curves section (600 bytes)...")
-            log(string.format("  Remove point: 0x%X (current timing_curve_ptr)", mem_timing_curve_ptr))
+            log("Removing time scales section (600 bytes)...")
+            log(string.format("  Remove point: 0x%X (current time_scale_ptr)", mem_time_scale_ptr))
         end
 
         -- Shift memory backward by 600 bytes (use StructureManager for consistency)
@@ -193,7 +193,7 @@ local function handle_timing_curve_structure_change(action, silent)
         StructureManager.shift_memory_region(shift_start, shift_end, -TIMING_SECTION_SIZE)
 
         -- Update header pointers
-        header.timing_curve_ptr = 0  -- No more timing curves
+        header.time_scale_ptr = 0  -- No more time scales
         header.effect_flags_ptr = mem_effect_flags_ptr - TIMING_SECTION_SIZE
         header.timeline_section_ptr = mem_timeline_section_ptr - TIMING_SECTION_SIZE
         header.sound_def_ptr = mem_sound_def_ptr - TIMING_SECTION_SIZE
@@ -206,9 +206,9 @@ local function handle_timing_curve_structure_change(action, silent)
         MemUtils.write32(base + 0x20, header.sound_def_ptr)
         MemUtils.write32(base + 0x24, header.texture_ptr)
 
-        -- Clear timing curves data
-        EFFECT_EDITOR.timing_curves = nil
-        EFFECT_EDITOR.original_timing_curves = nil
+        -- Clear time scales data
+        EFFECT_EDITOR.time_scales = nil
+        EFFECT_EDITOR.original_time_scales = nil
 
         -- Clear timing enable flags from effect_flags
         if EFFECT_EDITOR.effect_flags then
@@ -219,10 +219,10 @@ local function handle_timing_curve_structure_change(action, silent)
         end
 
         if not silent then
-            log(string.format("  New timing_curve_ptr: 0x%X (disabled)", header.timing_curve_ptr))
+            log(string.format("  New time_scale_ptr: 0x%X (disabled)", header.time_scale_ptr))
             log(string.format("  New effect_flags_ptr: 0x%X", header.effect_flags_ptr))
             log(string.format("  New timeline_section_ptr: 0x%X", header.timeline_section_ptr))
-            log("  Timing curves section removed successfully")
+            log("  Time scales section removed successfully")
         end
 
         return true
@@ -231,8 +231,8 @@ local function handle_timing_curve_structure_change(action, silent)
     return false
 end
 
--- Public function to add timing curves section (for UI)
-function M.add_timing_curve_section()
+-- Public function to add time scales section (for UI)
+function M.add_time_scale_section()
     if not EFFECT_EDITOR.memory_base or EFFECT_EDITOR.memory_base < 0x80000000 then
         log_error("No valid memory base address set. Load from memory first.")
         return false
@@ -241,19 +241,19 @@ function M.add_timing_curve_section()
     PCSX.pauseEmulator()
     MemUtils.refresh_mem()
 
-    local success = handle_timing_curve_structure_change("add", false)
+    local success = handle_time_scale_structure_change("add", false)
     if success then
         EFFECT_EDITOR.sections = Parser.calculate_sections(EFFECT_EDITOR.header)
         print("")
-        print("Added timing curves section (600 bytes). Emulator is PAUSED.")
+        print("Added time scales section (600 bytes). Emulator is PAUSED.")
         print("All downstream sections shifted. Resume with F5/F6.")
         print("")
     end
     return success
 end
 
--- Public function to remove timing curves section (for UI)
-function M.remove_timing_curve_section()
+-- Public function to remove time scales section (for UI)
+function M.remove_time_scale_section()
     if not EFFECT_EDITOR.memory_base or EFFECT_EDITOR.memory_base < 0x80000000 then
         log_error("No valid memory base address set. Load from memory first.")
         return false
@@ -262,11 +262,11 @@ function M.remove_timing_curve_section()
     PCSX.pauseEmulator()
     MemUtils.refresh_mem()
 
-    local success = handle_timing_curve_structure_change("remove", false)
+    local success = handle_time_scale_structure_change("remove", false)
     if success then
         EFFECT_EDITOR.sections = Parser.calculate_sections(EFFECT_EDITOR.header)
         print("")
-        print("Removed timing curves section. Emulator is PAUSED.")
+        print("Removed time scales section. Emulator is PAUSED.")
         print("All downstream sections shifted back. Resume with F5/F6.")
         print("")
     end
@@ -277,7 +277,7 @@ end
 -- Apply All Edits to Memory (PRIMARY FUNCTION)
 --------------------------------------------------------------------------------
 
--- Helper: Handle structure changes (script + emitter count + timing curve add/remove)
+-- Helper: Handle structure changes (script + emitter count + time scale add/remove)
 -- Returns list of structure changes applied
 local function apply_structure_changes(base, silent)
     local applied = {}
@@ -363,18 +363,18 @@ local function apply_structure_changes(base, silent)
         table.insert(applied, "structure")
     end
 
-    -- Handle timing curve structure changes (add/remove 600-byte section)
-    local mem_timing_curve_ptr = MemUtils.read32(base + 0x14)
-    local lua_timing_curve_ptr = EFFECT_EDITOR.header.timing_curve_ptr
+    -- Handle time scale structure changes (add/remove 600-byte section)
+    local mem_time_scale_ptr = MemUtils.read32(base + 0x14)
+    local lua_time_scale_ptr = EFFECT_EDITOR.header.time_scale_ptr
 
-    if lua_timing_curve_ptr ~= 0 and mem_timing_curve_ptr == 0 then
-        if not silent then log("  Timing curve structure change: ADDING 600-byte section") end
-        if handle_timing_curve_structure_change("add", silent) then
+    if lua_time_scale_ptr ~= 0 and mem_time_scale_ptr == 0 then
+        if not silent then log("  Time scale structure change: ADDING 600-byte section") end
+        if handle_time_scale_structure_change("add", silent) then
             table.insert(applied, "timing structure (add)")
         end
-    elseif lua_timing_curve_ptr == 0 and mem_timing_curve_ptr ~= 0 then
-        if not silent then log("  Timing curve structure change: REMOVING section") end
-        if handle_timing_curve_structure_change("remove", silent) then
+    elseif lua_time_scale_ptr == 0 and mem_time_scale_ptr ~= 0 then
+        if not silent then log("  Time scale structure change: REMOVING section") end
+        if handle_time_scale_structure_change("remove", silent) then
             table.insert(applied, "timing structure (remove)")
         end
     end
@@ -516,13 +516,13 @@ local function write_timeline_data(base, header, silent)
     return applied
 end
 
--- Helper: Write timing curves
-local function write_timing_curves(base, header, silent)
-    if not EFFECT_EDITOR.timing_curves or header.timing_curve_ptr == 0 then return {} end
+-- Helper: Write time scales
+local function write_time_scales(base, header, silent)
+    if not EFFECT_EDITOR.time_scales or header.time_scale_ptr == 0 then return {} end
 
-    Parser.write_timing_curves_to_memory(base, header.timing_curve_ptr, EFFECT_EDITOR.timing_curves)
-    if not silent then log(string.format("  Wrote timing curves at 0x%X", header.timing_curve_ptr)) end
-    return {"timing curves"}
+    Parser.write_time_scales_to_memory(base, header.time_scale_ptr, EFFECT_EDITOR.time_scales)
+    if not silent then log(string.format("  Wrote time scales at 0x%X", header.time_scale_ptr)) end
+    return {"time scales"}
 end
 
 -- Helper: Write flags (effect + sound)
@@ -638,17 +638,17 @@ function M.apply_all_edits_to_memory(silent)
         EFFECT_EDITOR.header.script_data_ptr = mem_header.script_data_ptr
         EFFECT_EDITOR.header.effect_data_ptr = mem_header.effect_data_ptr
         EFFECT_EDITOR.header.anim_table_ptr = mem_header.anim_table_ptr
-        -- NOTE: timing_curve_ptr is intentionally NOT refreshed from memory
-        -- The Lua header value represents user intent (wanting timing curves)
-        -- Memory value after savestate reload is 0 (original state without timing curves)
-        -- The timing curve handler will add the section if lua_ptr != 0 && mem_ptr == 0
+        -- NOTE: time_scale_ptr is intentionally NOT refreshed from memory
+        -- The Lua header value represents user intent (wanting time scales)
+        -- Memory value after savestate reload is 0 (original state without time scales)
+        -- The time scale handler will add the section if lua_ptr != 0 && mem_ptr == 0
         EFFECT_EDITOR.header.effect_flags_ptr = mem_header.effect_flags_ptr
         EFFECT_EDITOR.header.timeline_section_ptr = mem_header.timeline_section_ptr
         EFFECT_EDITOR.header.sound_def_ptr = mem_header.sound_def_ptr
         EFFECT_EDITOR.header.texture_ptr = mem_header.texture_ptr
         if not silent then
-            print(string.format("[APPLY_EDITS] Refreshed header from memory: frames=0x%X, animation=0x%X, effect_data=0x%X (timing_curve_ptr preserved: 0x%X)",
-                EFFECT_EDITOR.header.frames_ptr, EFFECT_EDITOR.header.animation_ptr, EFFECT_EDITOR.header.effect_data_ptr, EFFECT_EDITOR.header.timing_curve_ptr))
+            print(string.format("[APPLY_EDITS] Refreshed header from memory: frames=0x%X, animation=0x%X, effect_data=0x%X (time_scale_ptr preserved: 0x%X)",
+                EFFECT_EDITOR.header.frames_ptr, EFFECT_EDITOR.header.animation_ptr, EFFECT_EDITOR.header.effect_data_ptr, EFFECT_EDITOR.header.time_scale_ptr))
         end
     end
 
@@ -683,7 +683,7 @@ function M.apply_all_edits_to_memory(silent)
     for _, item in ipairs(write_timeline_data(base, header, silent)) do
         table.insert(applied, item)
     end
-    for _, item in ipairs(write_timing_curves(base, header, silent)) do
+    for _, item in ipairs(write_time_scales(base, header, silent)) do
         table.insert(applied, item)
     end
     for _, item in ipairs(write_flags(base, header, silent)) do
@@ -783,8 +783,8 @@ local function get_parser_dispatch(source_type, source)
             parse_all_color_tracks = function(offset)
                 return Parser.parse_all_color_tracks(source, offset)
             end,
-            parse_timing_curves = function(offset)
-                return Parser.parse_timing_curves_from_data(source, offset)
+            parse_time_scales = function(offset)
+                return Parser.parse_time_scales_from_data(source, offset)
             end,
             parse_effect_flags = function(offset)
                 return Parser.parse_effect_flags_from_data(source, offset)
@@ -841,8 +841,8 @@ local function get_parser_dispatch(source_type, source)
             parse_all_color_tracks = function(offset)
                 return Parser.parse_all_color_tracks_from_memory(source, offset)
             end,
-            parse_timing_curves = function(offset)
-                return Parser.parse_timing_curves_from_memory(source, offset)
+            parse_time_scales = function(offset)
+                return Parser.parse_time_scales_from_memory(source, offset)
             end,
             parse_effect_flags = function(offset)
                 return Parser.parse_effect_flags_from_memory(source, offset)
@@ -916,13 +916,13 @@ local function parse_all_sections(parsers, log_fn)
     EFFECT_EDITOR.original_color_tracks = Parser.copy_color_tracks(EFFECT_EDITOR.color_tracks)
     log_fn(string.format("  Loaded %d color tracks", #EFFECT_EDITOR.color_tracks))
 
-    -- Timing curves (may be nil)
-    EFFECT_EDITOR.timing_curves = parsers.parse_timing_curves(header.timing_curve_ptr)
-    EFFECT_EDITOR.original_timing_curves = Parser.copy_timing_curves(EFFECT_EDITOR.timing_curves)
-    if EFFECT_EDITOR.timing_curves then
-        log_fn("  Loaded timing curves")
+    -- Time scales (may be nil)
+    EFFECT_EDITOR.time_scales = parsers.parse_time_scales(header.time_scale_ptr)
+    EFFECT_EDITOR.original_time_scales = Parser.copy_time_scales(EFFECT_EDITOR.time_scales)
+    if EFFECT_EDITOR.time_scales then
+        log_fn("  Loaded time scales")
     else
-        log_fn("  No timing curves (ptr=0)")
+        log_fn("  No time scales (ptr=0)")
     end
 
     -- Effect flags
@@ -956,7 +956,7 @@ local function parse_all_sections(parsers, log_fn)
     EFFECT_EDITOR.original_emitter_count = EFFECT_EDITOR.emitter_count
     EFFECT_EDITOR.original_header = {
         anim_table_ptr = header.anim_table_ptr,
-        timing_curve_ptr = header.timing_curve_ptr,
+        time_scale_ptr = header.time_scale_ptr,
         effect_flags_ptr = header.effect_flags_ptr,
         timeline_section_ptr = header.timeline_section_ptr,
         sound_def_ptr = header.sound_def_ptr,
@@ -1063,7 +1063,7 @@ function M.debug_sections()
         {name = "script",      ptr = header.script_data_ptr},
         {name = "effect_data", ptr = header.effect_data_ptr},
         {name = "anim_table",  ptr = header.anim_table_ptr},
-        {name = "timing",      ptr = header.timing_curve_ptr},
+        {name = "timing",      ptr = header.time_scale_ptr},
         {name = "flags",       ptr = header.effect_flags_ptr},
         {name = "timeline",    ptr = header.timeline_section_ptr},
         {name = "sound_def",   ptr = header.sound_def_ptr},

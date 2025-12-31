@@ -38,7 +38,7 @@ function M.draw()
         {"script_data_ptr", 0x08, h.script_data_ptr},
         {"effect_data_ptr", 0x0C, h.effect_data_ptr},
         {"anim_table_ptr", 0x10, h.anim_table_ptr},
-        {"timing_curve_ptr", 0x14, h.timing_curve_ptr},
+        {"time_scale_ptr", 0x14, h.time_scale_ptr},
         {"effect_flags_ptr", 0x18, h.effect_flags_ptr},
         {"timeline_section_ptr", 0x1C, h.timeline_section_ptr},
         {"sound_def_ptr", 0x20, h.sound_def_ptr},

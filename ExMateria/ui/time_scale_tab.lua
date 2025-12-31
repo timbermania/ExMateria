@@ -1,5 +1,5 @@
 -- ui/time_scale_tab.lua
--- Time Scale / Timing Curves Editor Tab
+-- Time Scale / Time Scales Editor Tab
 -- Edits playback speed curves for dramatic slow-motion effects
 
 local M = {}
@@ -8,12 +8,12 @@ local M = {}
 -- Dependencies (will be injected)
 --------------------------------------------------------------------------------
 
-local add_timing_section_fn = nil
-local remove_timing_section_fn = nil
+local add_time_scale_section_fn = nil
+local remove_time_scale_section_fn = nil
 
-function M.set_dependencies(add_timing_section, remove_timing_section)
-    add_timing_section_fn = add_timing_section
-    remove_timing_section_fn = remove_timing_section
+function M.set_dependencies(add_time_scale_section, remove_time_scale_section)
+    add_time_scale_section_fn = add_time_scale_section
+    remove_time_scale_section_fn = remove_time_scale_section
 end
 
 --------------------------------------------------------------------------------
@@ -93,14 +93,14 @@ end
 
 -- Get the current region curve
 local function get_current_curve()
-    if not EFFECT_EDITOR.timing_curves then return nil end
-    return EFFECT_EDITOR.timing_curves[get_region_key()]
+    if not EFFECT_EDITOR.time_scales then return nil end
+    return EFFECT_EDITOR.time_scales[get_region_key()]
 end
 
 -- Set the current region curve
 local function set_current_curve(curve_data)
-    if not EFFECT_EDITOR.timing_curves then return end
-    EFFECT_EDITOR.timing_curves[get_region_key()] = curve_data
+    if not EFFECT_EDITOR.time_scales then return end
+    EFFECT_EDITOR.time_scales[get_region_key()] = curve_data
 end
 
 -- Build region items for combo
@@ -599,9 +599,9 @@ end
 local function draw_action_buttons()
     -- Reset to original
     if imgui.Button("Reset to Original##time_scale") then
-        if EFFECT_EDITOR.original_timing_curves then
+        if EFFECT_EDITOR.original_time_scales then
             local region_key = get_region_key()
-            local original = EFFECT_EDITOR.original_timing_curves[region_key]
+            local original = EFFECT_EDITOR.original_time_scales[region_key]
             if original then
                 local copy = {}
                 for i = 1, TIME_SCALE_LENGTH do
@@ -647,7 +647,7 @@ local function draw_help_section()
         imgui.TextUnformatted("")
 
         imgui.TextUnformatted("ENABLE FLAGS:")
-        imgui.TextUnformatted("  Both timing_curve_ptr != 0 AND the enable bit must be set.")
+        imgui.TextUnformatted("  Both time_scale_ptr != 0 AND the enable bit must be set.")
         imgui.TextUnformatted("  Outer Phases: bit 5 (0x20) in effect_flags")
         imgui.TextUnformatted("  For-Each Phase: bit 6 (0x40) in effect_flags")
 
@@ -666,13 +666,13 @@ function M.draw()
         return
     end
 
-    -- Check if timing curves DATA exists (timing_curve_ptr != 0)
-    local has_timing_curves = EFFECT_EDITOR.header.timing_curve_ptr ~= 0
+    -- Check if time scales DATA exists (time_scale_ptr != 0)
+    local has_time_scales = EFFECT_EDITOR.header.time_scale_ptr ~= 0
 
-    -- Show timing curve pointer status
-    imgui.TextUnformatted(string.format("timing_curve_ptr: 0x%X", EFFECT_EDITOR.header.timing_curve_ptr or 0))
+    -- Show time scale pointer status
+    imgui.TextUnformatted(string.format("time_scale_ptr: 0x%X", EFFECT_EDITOR.header.time_scale_ptr or 0))
     imgui.SameLine()
-    if has_timing_curves then
+    if has_time_scales then
         imgui.TextUnformatted("(section exists)")
     else
         imgui.TextUnformatted("(no section)")
@@ -682,10 +682,10 @@ function M.draw()
     draw_enable_flags()
 
     -- Show warning if data section doesn't exist
-    if not has_timing_curves then
+    if not has_time_scales then
         imgui.Separator()
-        imgui.TextUnformatted("WARNING: No timing curve DATA section exists.")
-        imgui.TextUnformatted("(header[0x14] timing_curve_ptr = 0)")
+        imgui.TextUnformatted("WARNING: No time scale DATA section exists.")
+        imgui.TextUnformatted("(header[0x14] time_scale_ptr = 0)")
         imgui.TextUnformatted("")
         imgui.TextUnformatted("The enable flags above have NO EFFECT without data.")
         imgui.TextUnformatted("")
@@ -693,15 +693,15 @@ function M.draw()
         -- Create section button
         local can_create = EFFECT_EDITOR.memory_base and EFFECT_EDITOR.memory_base >= 0x80000000
         if can_create then
-            if imgui.Button("Create Timing Curves Section##create_timing") then
-                if add_timing_section_fn then
-                    add_timing_section_fn()
+            if imgui.Button("Create Time Scales Section##create_timing") then
+                if add_time_scale_section_fn then
+                    add_time_scale_section_fn()
                 end
             end
             imgui.SameLine()
             imgui.TextUnformatted("(Inserts 600 bytes, shifts all downstream sections)")
         else
-            imgui.TextUnformatted("(Create Timing Curves Section - no memory target)")
+            imgui.TextUnformatted("(Create Time Scales Section - no memory target)")
         end
 
         imgui.Separator()
@@ -709,7 +709,7 @@ function M.draw()
         return
     end
 
-    if not EFFECT_EDITOR.timing_curves then
+    if not EFFECT_EDITOR.time_scales then
         imgui.TextUnformatted("Timing curves not loaded. Load an effect first.")
         return
     end
@@ -775,15 +775,15 @@ function M.draw()
     imgui.SameLine()
     local can_remove = EFFECT_EDITOR.memory_base and EFFECT_EDITOR.memory_base >= 0x80000000
     if can_remove then
-        if imgui.Button("Remove Timing Curves Section##remove_timing") then
-            if remove_timing_section_fn then
-                remove_timing_section_fn()
+        if imgui.Button("Remove Time Scales Section##remove_timing") then
+            if remove_time_scale_section_fn then
+                remove_time_scale_section_fn()
             end
         end
         imgui.SameLine()
         imgui.TextUnformatted("(Shifts sections back 600 bytes, clears enable flags)")
     else
-        imgui.TextUnformatted("(Remove Timing Curves Section - no memory target)")
+        imgui.TextUnformatted("(Remove Time Scales Section - no memory target)")
     end
 
     imgui.Separator()

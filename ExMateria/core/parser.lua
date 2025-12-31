@@ -17,7 +17,7 @@ M.SECTION_NAMES = {
     "script",
     "particle_system",
     "anim_curves",
-    "timing_curves",
+    "time_scales",
     "effect_flags",
     "timeline",
     "sound_def",
@@ -31,7 +31,7 @@ M.HEADER_OFFSETS = {
     script_data_ptr = 0x08,
     effect_data_ptr = 0x0C,
     anim_table_ptr = 0x10,
-    timing_curve_ptr = 0x14,
+    time_scale_ptr = 0x14,
     effect_flags_ptr = 0x18,
     timeline_section_ptr = 0x1C,
     sound_def_ptr = 0x20,
@@ -76,7 +76,7 @@ local function parse_header_impl(reader)
         script_data_ptr = reader.read32(0x08),
         effect_data_ptr = reader.read32(0x0C),
         anim_table_ptr = reader.read32(0x10),
-        timing_curve_ptr = reader.read32(0x14),
+        time_scale_ptr = reader.read32(0x14),
         effect_flags_ptr = reader.read32(0x18),
         timeline_section_ptr = reader.read32(0x1C),
         sound_def_ptr = reader.read32(0x20),
@@ -130,16 +130,16 @@ function M.calculate_sections(header)
         size = header.anim_table_ptr - header.effect_data_ptr
     }
 
-    if header.timing_curve_ptr ~= 0 then
+    if header.time_scale_ptr ~= 0 then
         sections[5] = {
             name = "Anim Curves",
             offset = header.anim_table_ptr,
-            size = header.timing_curve_ptr - header.anim_table_ptr
+            size = header.time_scale_ptr - header.anim_table_ptr
         }
         sections[6] = {
-            name = "Timing Curves",
-            offset = header.timing_curve_ptr,
-            size = header.effect_flags_ptr - header.timing_curve_ptr
+            name = "Time Scales",
+            offset = header.time_scale_ptr,
+            size = header.effect_flags_ptr - header.time_scale_ptr
         }
     else
         sections[5] = {
@@ -149,7 +149,7 @@ function M.calculate_sections(header)
         }
     end
 
-    local idx = header.timing_curve_ptr ~= 0 and 7 or 6
+    local idx = header.time_scale_ptr ~= 0 and 7 or 6
     sections[idx] = {
         name = "Effect Flags",
         offset = header.effect_flags_ptr,
@@ -300,9 +300,9 @@ function M.validate_header(header)
         {"anim_table_ptr", header.anim_table_ptr},
     }
 
-    -- timing_curve_ptr may be 0 (unused)
-    if header.timing_curve_ptr ~= 0 then
-        table.insert(order, {"timing_curve_ptr", header.timing_curve_ptr})
+    -- time_scale_ptr may be 0 (unused)
+    if header.time_scale_ptr ~= 0 then
+        table.insert(order, {"time_scale_ptr", header.time_scale_ptr})
     end
 
     table.insert(order, {"effect_flags_ptr", header.effect_flags_ptr})
@@ -1140,7 +1140,7 @@ function M.copy_color_tracks(tracks)
 end
 
 --------------------------------------------------------------------------------
--- Timing Curves (Time Scale) Section
+-- Time Scales (Time Scale) Section
 -- 600 bytes total: 300 bytes process_timeline + 300 bytes animate_tick
 -- Nibble-packed: each byte = 2 frame values (low nibble = even, high nibble = odd)
 --------------------------------------------------------------------------------
@@ -1164,7 +1164,7 @@ function M.unpack_nibbles(packed_bytes)
 end
 
 -- Pack 600 values into 300 bytes of nibble-packed data
--- Clamps values to 0-15 range (though 0-9 are the valid timing values)
+-- Clamps values to 0-15 range (though 0-9 are the valid time scale values)
 function M.pack_nibbles(values)
     local packed = {}
     for i = 1, 300 do
@@ -1177,8 +1177,8 @@ function M.pack_nibbles(values)
     return packed
 end
 
--- Internal unified implementation for timing curves
-local function parse_timing_curves_impl(reader)
+-- Internal unified implementation for time scales
+local function parse_time_scales_impl(reader)
     -- Read process_timeline region (bytes 0-299)
     local pt_bytes = {}
     for i = 0, TIME_SCALE_BYTE_COUNT - 1 do
@@ -1197,30 +1197,30 @@ local function parse_timing_curves_impl(reader)
     }
 end
 
--- Parse timing curves from file data
--- Returns nil if timing_curve_ptr is 0 (no timing curves)
-function M.parse_timing_curves_from_data(data, timing_curve_ptr)
-    if not data or timing_curve_ptr == 0 then
+-- Parse time scales from file data
+-- Returns nil if time_scale_ptr is 0 (no time scales)
+function M.parse_time_scales_from_data(data, time_scale_ptr)
+    if not data or time_scale_ptr == 0 then
         return nil
     end
-    return parse_timing_curves_impl(mem.buffer_reader(data, timing_curve_ptr))
+    return parse_time_scales_impl(mem.buffer_reader(data, time_scale_ptr))
 end
 
--- Parse timing curves from PSX memory
-function M.parse_timing_curves_from_memory(base_addr, timing_curve_ptr)
-    if timing_curve_ptr == 0 then
+-- Parse time scales from PSX memory
+function M.parse_time_scales_from_memory(base_addr, time_scale_ptr)
+    if time_scale_ptr == 0 then
         return nil
     end
-    return parse_timing_curves_impl(mem.memory_reader(base_addr + timing_curve_ptr))
+    return parse_time_scales_impl(mem.memory_reader(base_addr + time_scale_ptr))
 end
 
--- Write timing curves to PSX memory
-function M.write_timing_curves_to_memory(base_addr, timing_curve_ptr, curves)
-    if timing_curve_ptr == 0 or not curves then
+-- Write time scales to PSX memory
+function M.write_time_scales_to_memory(base_addr, time_scale_ptr, curves)
+    if time_scale_ptr == 0 or not curves then
         return
     end
 
-    local addr = base_addr + timing_curve_ptr
+    local addr = base_addr + time_scale_ptr
 
     -- Write process_timeline region
     local pt_packed = M.pack_nibbles(curves.process_timeline)
@@ -1235,8 +1235,8 @@ function M.write_timing_curves_to_memory(base_addr, timing_curve_ptr, curves)
     end
 end
 
--- Deep copy timing curves for reset functionality
-function M.copy_timing_curves(curves)
+-- Deep copy time scales for reset functionality
+function M.copy_time_scales(curves)
     if not curves then return nil end
     local copy = {
         process_timeline = {},
@@ -1251,7 +1251,7 @@ end
 
 --------------------------------------------------------------------------------
 -- Effect Flags Section
--- First byte (offset 0x00) contains behavior flags including timing curve enables
+-- First byte (offset 0x00) contains behavior flags including time scale enables
 --------------------------------------------------------------------------------
 
 -- Internal unified implementation using reader abstraction
@@ -1297,8 +1297,8 @@ end
 M.SCRIPT_OPCODES = {
     [0]  = {name = "goto_yield",           size = 4, params = {{name = "target", type = "offset"}}},
     [1]  = {name = "goto",                 size = 4, params = {{name = "target", type = "offset"}}},
-    [2]  = {name = "spawn_child_effect",   size = 4, params = {{name = "child_entry", type = "offset"}}},
-    [3]  = {name = "terminate_child",      size = 2, params = {}},
+    [2]  = {name = "spawn_for_each_instance", size = 4, params = {{name = "for_each_entry", type = "offset"}}},
+    [3]  = {name = "terminate_for_each",   size = 2, params = {}},
     [4]  = {name = "end",                  size = 2, params = {}},
     [5]  = {name = "set_texture_page",     size = 2, params = {}},
     [6]  = {name = "load_callback",        size = 4, params = {{name = "callback_ptr", type = "ptr"}}},
@@ -1320,9 +1320,9 @@ M.SCRIPT_OPCODES = {
     [22] = {name = "branch_count_eq",      size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
     [23] = {name = "branch_count_gt",      size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
     [24] = {name = "branch_count_lt",      size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
-    [25] = {name = "branch_child_count_eq",size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
-    [26] = {name = "branch_child_active",  size = 4, params = {{name = "target", type = "offset"}}},
-    [27] = {name = "branch_child_inactive",size = 4, params = {{name = "target", type = "offset"}}},
+    [25] = {name = "branch_for_each_count_eq", size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
+    [26] = {name = "branch_for_each_active",  size = 4, params = {{name = "target", type = "offset"}}},
+    [27] = {name = "branch_for_each_inactive", size = 4, params = {{name = "target", type = "offset"}}},
     [28] = {name = "branch_reg_ne",        size = 6, params = {{name = "value", type = "s16"}, {name = "target", type = "offset"}}},
     [29] = {name = "branch_anim_done",     size = 4, params = {{name = "target", type = "offset"}}},
     [30] = {name = "branch_anim_done_cplx",size = 4, params = {{name = "target", type = "offset"}}},
@@ -1335,8 +1335,8 @@ M.SCRIPT_OPCODES = {
     [37] = {name = "update_all_particles", size = 2, params = {}},
     [38] = {name = "spawn_emitter",        size = 2, params = {}},
     [39] = {name = "init_physics_params",  size = 2, params = {}},
-    [40] = {name = "animate_tick",         size = 2, params = {}},
-    [41] = {name = "process_timeline",     size = 4, params = {{name = "phase", type = "s16"}}},
+    [40] = {name = "for_each_phase_timeline_tick", size = 2, params = {}},
+    [41] = {name = "outer_phases_timeline_tick", size = 4, params = {{name = "phase", type = "s16"}}},
     [42] = {name = "clear_timeline_a",     size = 2, params = {}},
     [43] = {name = "clear_timeline_b",     size = 2, params = {}},
     [44] = {name = "nop_44",               size = 2, params = {}},
@@ -3132,14 +3132,14 @@ end
 
 -- Configure timeline channels for preview mode
 -- Sets up N channels, each running one emitter for a very long duration
--- pattern: "pattern1" uses phase1 channels, "pattern2" uses animate_tick channels
+-- pattern: "3phase" uses phase1 channels, "1phase" uses for-each (animate_tick) channels
 function M.configure_preview_timeline(num_sequences, timeline_channels, pattern)
     if not timeline_channels then
         timeline_channels = EFFECT_EDITOR.timeline_channels
     end
     if not timeline_channels then return end
 
-    -- For preview, always use animate_tick channels with Pattern 2
+    -- For preview, always use for-each channels with 1-phase
     local target_context = "animate_tick"
 
     -- First, clear ALL channels to avoid interference

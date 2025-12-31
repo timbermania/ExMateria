@@ -282,7 +282,7 @@ M.EFFECT_HEADER_SCHEMA = {
     {name = "script_data_ptr", offset = 0x08, type = "u32"},
     {name = "effect_data_ptr", offset = 0x0C, type = "u32"},
     {name = "anim_table_ptr", offset = 0x10, type = "u32"},
-    {name = "timing_curve_ptr", offset = 0x14, type = "u32"},
+    {name = "time_scale_ptr", offset = 0x14, type = "u32"},
     {name = "effect_flags_ptr", offset = 0x18, type = "u32"},
     {name = "timeline_section_ptr", offset = 0x1C, type = "u32"},
     {name = "sound_def_ptr", offset = 0x20, type = "u32"},

@@ -43,11 +43,11 @@ EFFECT_EDITOR = {
     color_tracks = nil,                 -- Array of 12 color tracks
     original_color_tracks = nil,        -- Copy for reset functionality
 
-    -- Time scale / timing curves data (2 regions: process_timeline and animate_tick)
-    timing_curves = nil,                -- { process_timeline = {600 values}, animate_tick = {600 values} }
-    original_timing_curves = nil,       -- Copy for reset functionality
+    -- Time scale / time scales data (2 regions: process_timeline and animate_tick)
+    time_scales = nil,                -- { process_timeline = {600 values}, animate_tick = {600 values} }
+    original_time_scales = nil,       -- Copy for reset functionality
 
-    -- Effect flags (for timing curve enable bits)
+    -- Effect flags (for time scale enable bits)
     effect_flags = nil,                 -- { flags_byte = 0 }
     original_effect_flags = nil,        -- Copy for reset functionality
 
@@ -148,8 +148,8 @@ function M.reset()
     EFFECT_EDITOR.original_camera_tables = nil
     EFFECT_EDITOR.color_tracks = nil
     EFFECT_EDITOR.original_color_tracks = nil
-    EFFECT_EDITOR.timing_curves = nil
-    EFFECT_EDITOR.original_timing_curves = nil
+    EFFECT_EDITOR.time_scales = nil
+    EFFECT_EDITOR.original_time_scales = nil
     EFFECT_EDITOR.effect_flags = nil
     EFFECT_EDITOR.original_effect_flags = nil
     EFFECT_EDITOR.sound_flags = nil
