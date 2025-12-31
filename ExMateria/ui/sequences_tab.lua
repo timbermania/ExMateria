@@ -587,10 +587,10 @@ local function get_current_script_size()
     return size
 end
 
--- Generate Pattern 2 script padded to target size with NOPs
--- This avoids structure changes when converting from Pattern 1
+-- Generate 1-phase script padded to target size with NOPs
+-- This avoids structure changes when converting from 3-phase
 local function generate_padded_pattern2_script(target_size)
-    -- Pattern 2 base script (30 bytes)
+    -- 1-phase base script (30 bytes)
     local insts = {}
 
     -- 0x00: set_texture_page (2 bytes)
@@ -601,7 +601,7 @@ local function generate_padded_pattern2_script(target_size)
     local branch1 = Parser.create_script_instruction(29)
     branch1.params.target = 0x10
     table.insert(insts, branch1)
-    -- 0x08: animate_tick (2 bytes)
+    -- 0x08: for_each_phase_timeline_tick (2 bytes)
     table.insert(insts, Parser.create_script_instruction(40))
     -- 0x0A: update_all_particles (2 bytes)
     table.insert(insts, Parser.create_script_instruction(37))
@@ -739,15 +739,15 @@ function M.enter_preview_mode(sequences)
         EFFECT_EDITOR.particle_header.emitter_count = num_enabled
     end
 
-    -- 3. Convert to Pattern 2 script (PADDED to avoid structure change)
+    -- 3. Convert to 1-phase script (PADDED to avoid structure change)
     local original_script_size = get_current_script_size()
     local new_script = generate_padded_pattern2_script(original_script_size)
     EFFECT_EDITOR.script_instructions = new_script
 
-    -- 4. Configure animate_tick timeline channels (Pattern 2 uses these)
+    -- 4. Configure for-each timeline channels (1-phase uses these)
     Parser.configure_preview_timeline(num_enabled, EFFECT_EDITOR.timeline_channels, "pattern2")
 
-    -- 5. Configure animate_tick screen effect track (neutral: no tint, no gradient)
+    -- 5. Configure for-each screen effect track (neutral: no tint, no gradient)
     Parser.configure_preview_screen_track(EFFECT_EDITOR.color_tracks)
 
     -- Set custom RGB for both kf[0] and kf[1] from UI slider

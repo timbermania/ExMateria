@@ -30,8 +30,8 @@ local ui_state = {
 -- Script Templates
 --------------------------------------------------------------------------------
 
--- Pattern 2: Single animation script (30 bytes)
--- Uses animate_tick (opcode 40) for single-phase timeline
+-- 1-phase: Single animation script (30 bytes)
+-- Uses for_each_phase_timeline_tick (opcode 40) for single-phase timeline
 local function generate_pattern2_script()
     local insts = {}
 
@@ -41,7 +41,7 @@ local function generate_pattern2_script()
     table.insert(insts, {opcode_id = 39, flags = 0, params = {}})
     -- 0x04: branch_anim_done → 0x10
     table.insert(insts, {opcode_id = 29, flags = 0, params = {target = 0x10}})
-    -- 0x08: animate_tick
+    -- 0x08: for_each_phase_timeline_tick
     table.insert(insts, {opcode_id = 40, flags = 0, params = {}})
     -- 0x0A: update_all_particles
     table.insert(insts, {opcode_id = 37, flags = 0, params = {}})
@@ -67,8 +67,8 @@ local function generate_pattern2_script()
     return insts
 end
 
--- Pattern 1: Multi-target script with child spawning (62 bytes)
--- Uses process_timeline_frame (opcode 41) for two-phase timeline
+-- 3-phase: Multi-target script with for-each spawning (62 bytes)
+-- Uses outer_phases_timeline_tick (opcode 41) for phase-1/phase-2 timeline
 local function generate_pattern1_script()
     local insts = {}
 
@@ -81,7 +81,7 @@ local function generate_pattern1_script()
     table.insert(insts, {opcode_id = 31, flags = 0, params = {target = 0x22}})
     -- 0x08: branch_anim_done_cplx → 0x16
     table.insert(insts, {opcode_id = 30, flags = 0, params = {target = 0x16}})
-    -- 0x0C: process_timeline_frame child=0x24
+    -- 0x0C: outer_phases_timeline_tick for_each=0x24
     table.insert(insts, {opcode_id = 41, flags = 0, params = {phase = 0x24}})
     -- 0x10: update_all_particles
     table.insert(insts, {opcode_id = 37, flags = 0, params = {}})
@@ -96,10 +96,10 @@ local function generate_pattern1_script()
     -- 0x22: end
     table.insert(insts, {opcode_id = 4, flags = 0, params = {}})
 
-    -- CHILD SCRIPT (0x24-0x3C)
+    -- FOR-EACH SCRIPT (0x24-0x3C)
     -- 0x24: branch_anim_done → 0x30
     table.insert(insts, {opcode_id = 29, flags = 0, params = {target = 0x30}})
-    -- 0x28: animate_tick
+    -- 0x28: for_each_phase_timeline_tick
     table.insert(insts, {opcode_id = 40, flags = 0, params = {}})
     -- 0x2A: update_all_particles
     table.insert(insts, {opcode_id = 37, flags = 0, params = {}})
@@ -142,9 +142,9 @@ local function detect_script_pattern()
     end
 
     if has_process_timeline and has_branch_target_type then
-        return "Pattern 1"
+        return "3-phase"
     elseif has_animate_tick and not has_process_timeline then
-        return "Pattern 2"
+        return "1-phase"
     else
         return "Custom"
     end
@@ -161,7 +161,7 @@ local OPCODE_CATEGORIES = {
     {name = "Script Register", ids = {16, 32, 33, 34, 35}},
     {name = "Branch (Register)", ids = {17, 18, 19, 20, 21, 28}},
     {name = "Branch (Count)", ids = {22, 23, 24, 25}},
-    {name = "Branch (Child)", ids = {26, 27}},
+    {name = "Branch (For-Each)", ids = {26, 27}},
     {name = "Branch (Animation)", ids = {29, 30, 31}},
     {name = "Animation/Particles", ids = {37, 38, 39, 40, 41, 42, 43}},
     {name = "No Operation", ids = {44, 45}},
@@ -467,10 +467,10 @@ local function draw_reference_section()
         imgui.Spacing()
         imgui.TextUnformatted("Script Entry Points:")
         imgui.TextUnformatted("  0x00: Main effect entry (root script)")
-        imgui.TextUnformatted("  0x24: Common child entry (Pattern 1 scripts)")
+        imgui.TextUnformatted("  0x24: For-each entry (3-phase scripts)")
         imgui.Spacing()
-        imgui.TextUnformatted("Pattern 1: 64 bytes (root + child scripts)")
-        imgui.TextUnformatted("Pattern 2: 36 bytes (single script)")
+        imgui.TextUnformatted("3-phase: 64 bytes (root + for-each scripts)")
+        imgui.TextUnformatted("1-phase: 36 bytes (single script)")
 
         imgui.Unindent()
     end
@@ -553,32 +553,32 @@ function M.draw()
         imgui.TextUnformatted(string.format("Current: %s (%d bytes)", current_pattern, current_size))
         imgui.Spacing()
 
-        -- Pattern 2 button
-        if imgui.Button("Convert to Pattern 2 (30 bytes)##p2") then
+        -- 1-phase button
+        if imgui.Button("Convert to 1-phase (30 bytes)##p2") then
             local new_script = generate_pattern2_script()
             Parser.recalculate_script_offsets(new_script)
             EFFECT_EDITOR.script_instructions = new_script
             ui_state.selected_index = -1
-            EFFECT_EDITOR.status_msg = "Converted to Pattern 2 (30 bytes). Click Apply to write to memory."
+            EFFECT_EDITOR.status_msg = "Converted to 1-phase (30 bytes). Click Apply to write to memory."
         end
         imgui.SameLine()
-        imgui.TextUnformatted("Single animation, animate_tick")
+        imgui.TextUnformatted("Single animation, for_each_phase_timeline_tick")
 
-        -- Pattern 1 button
-        if imgui.Button("Convert to Pattern 1 (62 bytes)##p1") then
+        -- 3-phase button
+        if imgui.Button("Convert to 3-phase (62 bytes)##p1") then
             local new_script = generate_pattern1_script()
             Parser.recalculate_script_offsets(new_script)
             EFFECT_EDITOR.script_instructions = new_script
             ui_state.selected_index = -1
-            EFFECT_EDITOR.status_msg = "Converted to Pattern 1 (62 bytes). Click Apply to write to memory."
+            EFFECT_EDITOR.status_msg = "Converted to 3-phase (62 bytes). Click Apply to write to memory."
         end
         imgui.SameLine()
-        imgui.TextUnformatted("Multi-target, process_timeline_frame")
+        imgui.TextUnformatted("Multi-target, outer_phases_timeline_tick")
 
         imgui.Spacing()
-        imgui.TextUnformatted("WARNING: Timeline data format differs between patterns!")
-        imgui.TextUnformatted("Pattern 1 expects phase1/phase2 channels.")
-        imgui.TextUnformatted("Pattern 2 expects single-phase channels.")
+        imgui.TextUnformatted("WARNING: Timeline data format differs between script types!")
+        imgui.TextUnformatted("3-phase expects phase-1/phase-2 channels.")
+        imgui.TextUnformatted("1-phase expects for-each channels only.")
         imgui.TextUnformatted("Mixing may produce unexpected results.")
 
         imgui.Unindent()

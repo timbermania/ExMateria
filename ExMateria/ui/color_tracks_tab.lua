@@ -28,18 +28,18 @@ local TRACK_NAMES = {
     [3] = "Screen Effect",
 }
 
--- Context display names
+-- Context display names (nomenclature: phase-1, for-each, phase-2)
 local CONTEXT_NAMES = {
-    animate_tick = "animate_tick (Child Effects)",
-    phase1 = "Phase 1 (Parent, Before Delay)",
-    phase2 = "Phase 2 (Parent, After Delay)",
+    animate_tick = "For-Each Phase",
+    phase1 = "Phase-1",
+    phase2 = "Phase-2",
 }
 
 -- Context descriptions for help section
 local CONTEXT_DESCRIPTIONS = {
-    animate_tick = "Used by child effects (spawned particles) and Pattern 2 effects. Called via opcode 40.",
-    phase1 = "Used by parent effects before spawn_delay. Called via opcode 41 (process_timeline_frame).",
-    phase2 = "Used by parent effects after phase2_delay. Called via opcode 41 (process_timeline_frame).",
+    animate_tick = "Used by for-each instances and 1-phase effects. Called via for_each_phase_timeline_tick (opcode 40).",
+    phase1 = "Used by 3-phase effects before for-each spawning. Called via outer_phases_timeline_tick (opcode 41).",
+    phase2 = "Used by 3-phase effects after phase2_delay. Called via outer_phases_timeline_tick (opcode 41).",
 }
 
 -- Track descriptions
@@ -411,7 +411,7 @@ local function draw_color_track(track, context_key, track_order)
 end
 
 --------------------------------------------------------------------------------
--- Draw Context Section (animate_tick, phase1, or phase2)
+-- Draw Context Section (for-each, phase-1, or phase-2)
 --------------------------------------------------------------------------------
 
 local function draw_context_section(context_key, tracks, is_first)
@@ -491,9 +491,9 @@ local function draw_help_section()
         imgui.TextUnformatted("")
 
         imgui.TextUnformatted("CONTEXTS:")
-        imgui.TextUnformatted("  - animate_tick: used by child/spawned effects")
-        imgui.TextUnformatted("  - Phase 1: before spawn_delay (parent effects)")
-        imgui.TextUnformatted("  - Phase 2: after phase2_delay (parent effects)")
+        imgui.TextUnformatted("  - For-Each: used by for-each instances and 1-phase effects")
+        imgui.TextUnformatted("  - Phase-1: before for-each spawning (3-phase effects)")
+        imgui.TextUnformatted("  - Phase-2: after phase2_delay (3-phase effects)")
 
         imgui.Unindent()
     end
@@ -517,7 +517,7 @@ function M.draw()
     imgui.Separator()
 
     -- Draw each context section
-    -- Order: animate_tick (default open), phase1, phase2
+    -- Order: for-each (default open), phase-1, phase-2
     draw_context_section("animate_tick", EFFECT_EDITOR.color_tracks, true)
     draw_context_section("phase1", EFFECT_EDITOR.color_tracks, false)
     draw_context_section("phase2", EFFECT_EDITOR.color_tracks, false)

@@ -18,15 +18,15 @@ end
 --------------------------------------------------------------------------------
 
 local TABLE_NAMES = {
-    [1] = "Table 0: MAIN",
-    [2] = "Table 1: FOR-EACH-TARGET",
-    [3] = "Table 2: CLEANUP",
+    [1] = "Table 0: Phase-1 Camera",
+    [2] = "Table 1: For-Each Camera",
+    [3] = "Table 2: Phase-2 Camera",
 }
 
 local TABLE_DESCRIPTIONS = {
-    [1] = "Active during Phase 1 (frames 0 to phase1_duration-1)",
-    [2] = "Active during spawn window (per-target timing offsets)",
-    [3] = "Active during Phase 2 (cleanup/return to battle camera)",
+    [1] = "Active during phase-1 (frames 0 to phase1_duration-1)",
+    [2] = "Active during for-each spawning (per-target timing offsets)",
+    [3] = "Active during phase-2 (cleanup/return to battle camera)",
 }
 
 local MAX_CAMERA_KEYFRAMES = 17
@@ -281,13 +281,13 @@ function M.draw()
         imgui.Indent()
         imgui.TextUnformatted("3 camera tables control different phases of the effect:")
         imgui.TextUnformatted("")
-        imgui.TextUnformatted("  Table 0 (MAIN): Primary effect camera")
+        imgui.TextUnformatted("  Table 0 (Phase-1 Camera): Primary effect camera")
         imgui.TextUnformatted("    Active: frames 0 to phase1_duration-1")
         imgui.TextUnformatted("")
-        imgui.TextUnformatted("  Table 1 (FOR-EACH-TARGET): Per-target adjustments")
-        imgui.TextUnformatted("    Active: during spawn window with per-target timing")
+        imgui.TextUnformatted("  Table 1 (For-Each Camera): Per-target adjustments")
+        imgui.TextUnformatted("    Active: during for-each spawning with per-target timing")
         imgui.TextUnformatted("")
-        imgui.TextUnformatted("  Table 2 (CLEANUP): Restore pre-turn camera")
+        imgui.TextUnformatted("  Table 2 (Phase-2 Camera): Restore pre-turn camera")
         imgui.TextUnformatted("    Active: phase2_start onwards")
         imgui.TextUnformatted("")
         imgui.Separator()

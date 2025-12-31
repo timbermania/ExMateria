@@ -203,7 +203,9 @@ function M.get_home_dir()
         return home
     end
 
-    return "C:/Users/Default"
+    -- Last resort fallback - use temp directory
+    local temp = os.getenv("TEMP") or os.getenv("TMP") or "/tmp"
+    return M.to_posix_path(temp)
 end
 
 -- Get the application data directory

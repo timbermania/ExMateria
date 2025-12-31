@@ -58,7 +58,7 @@ local FLAG_TIMING_ANIMATE_TICK = 0x40
 --------------------------------------------------------------------------------
 
 local ui_state = {
-    selected_region = 0,         -- 0 = process_timeline, 1 = animate_tick
+    selected_region = 0,         -- 0 = outer_phases, 1 = for_each_phase
     generator_type = 0,          -- Index into GENERATOR_TYPES
 
     -- Timing parameters
@@ -105,7 +105,7 @@ end
 
 -- Build region items for combo
 local function build_region_items()
-    return "Process Timeline (opcode 41)\0Animate Tick (opcode 40)\0"
+    return "Outer Phases (opcode 41)\0For-Each Phase (opcode 40)\0"
 end
 
 -- Build generator type items string
@@ -229,8 +229,8 @@ local function draw_enable_flags()
     imgui.TextUnformatted("Enable Timing:")
     imgui.SameLine()
 
-    -- Process Timeline checkbox
-    local c, v = imgui.Checkbox("Process Timeline (0x20)##pt_enable", pt_enabled)
+    -- Outer Phases checkbox
+    local c, v = imgui.Checkbox("Outer Phases (0x20)##pt_enable", pt_enabled)
     if c then
         if v and not pt_enabled then
             EFFECT_EDITOR.effect_flags.flags_byte = flags + FLAG_TIMING_PROCESS_TIMELINE
@@ -242,8 +242,8 @@ local function draw_enable_flags()
 
     imgui.SameLine()
 
-    -- Animate Tick checkbox
-    c, v = imgui.Checkbox("Animate Tick (0x40)##at_enable", at_enabled)
+    -- For-Each Phase checkbox
+    c, v = imgui.Checkbox("For-Each Phase (0x40)##at_enable", at_enabled)
     if c then
         if v and not at_enabled then
             EFFECT_EDITOR.effect_flags.flags_byte = flags + FLAG_TIMING_ANIMATE_TICK
@@ -640,16 +640,16 @@ local function draw_help_section()
         imgui.TextUnformatted("")
 
         imgui.TextUnformatted("REGIONS:")
-        imgui.TextUnformatted("  Process Timeline: Used by op_process_timeline_frame")
-        imgui.TextUnformatted("    (opcode 41) for parent effect's main animation")
-        imgui.TextUnformatted("  Animate Tick: Used by op_animate_tick")
-        imgui.TextUnformatted("    (opcode 40) for child effects and Pattern 2 scripts")
+        imgui.TextUnformatted("  Outer Phases: Used by outer_phases_timeline_tick")
+        imgui.TextUnformatted("    (opcode 41) for 3-phase effect's phase-1 and phase-2")
+        imgui.TextUnformatted("  For-Each Phase: Used by for_each_phase_timeline_tick")
+        imgui.TextUnformatted("    (opcode 40) for for-each instances and 1-phase effects")
         imgui.TextUnformatted("")
 
         imgui.TextUnformatted("ENABLE FLAGS:")
         imgui.TextUnformatted("  Both timing_curve_ptr != 0 AND the enable bit must be set.")
-        imgui.TextUnformatted("  Process Timeline: bit 5 (0x20) in effect_flags")
-        imgui.TextUnformatted("  Animate Tick: bit 6 (0x40) in effect_flags")
+        imgui.TextUnformatted("  Outer Phases: bit 5 (0x20) in effect_flags")
+        imgui.TextUnformatted("  For-Each Phase: bit 6 (0x40) in effect_flags")
 
         imgui.Unindent()
     end

@@ -386,8 +386,8 @@ end
 local function write_frames_section(base, header, silent)
     if not EFFECT_EDITOR.framesets or #EFFECT_EDITOR.framesets == 0 then return {} end
 
-    -- Pass offset_table_count to preserve original layout (including null terminator if present)
-    Parser.write_frames_section_to_memory(base, header.frames_ptr, EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count)
+    -- Pass offset_table_count and group_entries to preserve original layout
+    Parser.write_frames_section_to_memory(base, header.frames_ptr, EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count, EFFECT_EDITOR.frames_group_entries)
     local total_frames = 0
     for _, fs in ipairs(EFFECT_EDITOR.framesets) do
         total_frames = total_frames + #fs.frames
@@ -865,7 +865,7 @@ local function parse_all_sections(parsers, log_fn)
 
     -- Frames section
     local frames_size = header.animation_ptr - header.frames_ptr
-    EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count =
+    EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count, EFFECT_EDITOR.frames_group_entries =
         parsers.parse_frames(header.frames_ptr, frames_size)
     EFFECT_EDITOR.original_framesets = Parser.copy_framesets(EFFECT_EDITOR.framesets)
     local total_frames = 0

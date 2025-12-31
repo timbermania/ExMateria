@@ -23,6 +23,10 @@ M.EFFECT_BINS_PATH = nil
 M.META_PATH = nil
 M.TEXTURES_PATH = nil
 
+-- Path to original E###.BIN files (from fft-extract or ISO extraction)
+-- Used for loading original effect files and comparison
+M.EFFECT_FILES_PATH = nil
+
 --------------------------------------------------------------------------------
 -- Constants (SCUS94221 / NTSC-U version)
 --------------------------------------------------------------------------------
@@ -79,6 +83,9 @@ function M.init(script_dir)
             if user_config.DATA_PATH then
                 M.DATA_PATH = user_config.DATA_PATH
             end
+            if user_config.EFFECT_FILES_PATH then
+                M.EFFECT_FILES_PATH = user_config.EFFECT_FILES_PATH
+            end
             print("Effect Editor: Loaded user config from config_user.lua")
         end
     end
@@ -111,6 +118,19 @@ function M.set_data_path(new_path)
     M.ensure_dir(M.EFFECT_BINS_PATH)
     M.ensure_dir(M.META_PATH)
     M.ensure_dir(M.TEXTURES_PATH)
+end
+
+-- Update EFFECT_FILES_PATH (called from settings UI)
+function M.set_effect_files_path(new_path)
+    if not new_path or new_path == "" then
+        M.EFFECT_FILES_PATH = nil
+        return
+    end
+    -- Ensure trailing slash
+    if not new_path:match("/$") and not new_path:match("\\$") then
+        new_path = new_path .. "/"
+    end
+    M.EFFECT_FILES_PATH = new_path
 end
 
 return M

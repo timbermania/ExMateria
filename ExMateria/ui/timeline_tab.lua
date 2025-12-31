@@ -19,11 +19,11 @@ end
 
 local MAX_KEYFRAMES = 25
 
--- Context display names
+-- Context display names (nomenclature: phase-1, for-each, phase-2)
 local CONTEXT_NAMES = {
-    animate_tick = "Animate Tick",
-    phase1 = "Process Timeline Phase 1",
-    phase2 = "Process Timeline Phase 2",
+    animate_tick = "For-Each Phase",
+    phase1 = "Phase-1",
+    phase2 = "Phase-2",
 }
 
 --------------------------------------------------------------------------------
@@ -303,9 +303,9 @@ function M.draw()
         imgui.TextUnformatted("")
         imgui.Separator()
         imgui.TextUnformatted("Max Keyframe Behavior:")
-        imgui.TextUnformatted("  Animate Tick: max_keyframe is IGNORED by opcode 40.")
+        imgui.TextUnformatted("  For-Each: max_keyframe is IGNORED (for_each_phase_timeline_tick).")
         imgui.TextUnformatted("    Keyframes advance based on time markers only.")
-        imgui.TextUnformatted("  Phase 1/2: max_keyframe IS used by opcode 41.")
+        imgui.TextUnformatted("  Phase-1/2: max_keyframe IS used (outer_phases_timeline_tick).")
         imgui.TextUnformatted("    Value N means keyframes 0..N are valid.")
         imgui.Unindent()
     end
@@ -313,9 +313,9 @@ function M.draw()
     imgui.Separator()
 
     -- Group channels by context
-    -- Channels 1-5: animate_tick
-    -- Channels 6-10: phase1
-    -- Channels 11-15: phase2
+    -- Channels 1-5: for-each phase
+    -- Channels 6-10: phase-1
+    -- Channels 11-15: phase-2
     draw_channel_group("animate_tick", EFFECT_EDITOR.timeline_channels)
     draw_channel_group("phase1", EFFECT_EDITOR.timeline_channels)
     draw_channel_group("phase2", EFFECT_EDITOR.timeline_channels)

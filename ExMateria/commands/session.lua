@@ -105,6 +105,8 @@ function M.ee_load_session(name)
                             logging.log(string.format("  First 32 bytes: %s", hex))
 
                             -- Parse directly from .bin file data
+                            -- .bin files are always DATA format (no MIPS code), so base_offset = 0
+                            local base_offset = 0
                             EFFECT_EDITOR.file_data = bin_data
                             EFFECT_EDITOR.header = Parser.parse_header_from_data(bin_data)
                             logging.log(string.format("  Parsed header: effect_data_ptr=0x%X, anim_table_ptr=0x%X",
@@ -114,9 +116,9 @@ function M.ee_load_session(name)
                             -- Parse frames section from .bin data
                             if Parser.parse_frames_section_from_data then
                                 local frames_section_size = EFFECT_EDITOR.header.animation_ptr - EFFECT_EDITOR.header.frames_ptr
-                                EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count = Parser.parse_frames_section_from_data(
+                                EFFECT_EDITOR.framesets, EFFECT_EDITOR.frames_group_count, EFFECT_EDITOR.frames_offset_table_count, EFFECT_EDITOR.frames_group_entries = Parser.parse_frames_section_from_data(
                                     bin_data,
-                                    EFFECT_EDITOR.header.frames_ptr,
+                                    base_offset + EFFECT_EDITOR.header.frames_ptr,
                                     frames_section_size
                                 )
                                 EFFECT_EDITOR.original_framesets = Parser.copy_framesets(EFFECT_EDITOR.framesets)

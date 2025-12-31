@@ -14,4 +14,9 @@ return {
     -- Root folder for all editor data
     -- Subdirectories created automatically: savestates/, bins/, meta/
     DATA_PATH = "C:/Users/YourName/AppData/Roaming/pcsx-effect-editor/",
+
+    -- Path to original E###.BIN files (from fft-extract or ISO extraction)
+    -- Used for loading original effect files and comparison
+    -- Example: "C:/Users/YourName/Documents/fft-extract/EFFECT/"
+    EFFECT_FILES_PATH = nil,
 }

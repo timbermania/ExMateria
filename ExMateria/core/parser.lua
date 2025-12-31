@@ -2167,20 +2167,26 @@ local function parse_frame_from_memory(addr, frame_index)
 end
 
 -- Internal unified frames section parser
--- Returns: framesets (array), group_count (number), offset_table_entry_count (number)
+-- Returns: framesets (array), group_count (number), offset_table_entry_count (number), group_entries (array)
 local function parse_frames_section_impl(reader, section_size, track_file_offset)
     local framesets = {}
+    local group_entries = {}
 
     if section_size < 8 then
-        return framesets, 0, 0
+        return framesets, 0, 0, group_entries
     end
 
     -- Header: byte 0 = group_count
     local group_count = reader.read8(0)
     local group_entries_end = 4 + group_count * 2  -- offset table starts after group entries
 
+    -- Capture original group entry values (at bytes 4, 6, 8, ... for groups 0, 1, 2, ...)
+    for g = 0, group_count - 1 do
+        group_entries[g + 1] = reader.read16(4 + g * 2)
+    end
+
     if group_entries_end >= section_size then
-        return framesets, group_count, 0
+        return framesets, group_count, 0, group_entries
     end
 
     -- First frameset offset tells us where frame data starts
@@ -2190,7 +2196,7 @@ local function parse_frames_section_impl(reader, section_size, track_file_offset
     local max_frame_sets = math.floor((frame_sets_data_start - group_entries_end) / 2)
 
     if max_frame_sets <= 0 or max_frame_sets > 500 then
-        return framesets, group_count, 0
+        return framesets, group_count, 0, group_entries
     end
 
     -- Count actual valid entries in offset table
@@ -2204,7 +2210,7 @@ local function parse_frames_section_impl(reader, section_size, track_file_offset
     end
 
     if num_frame_sets <= 0 then
-        return framesets, group_count, max_frame_sets
+        return framesets, group_count, max_frame_sets, group_entries
     end
 
     -- Parse each frameset
@@ -2254,7 +2260,7 @@ local function parse_frames_section_impl(reader, section_size, track_file_offset
         ::continue::
     end
 
-    return framesets, group_count, max_frame_sets
+    return framesets, group_count, max_frame_sets, group_entries
 end
 
 -- Parse frames section from file data
@@ -2341,7 +2347,8 @@ end
 -- Write frames section to memory
 -- offset_table_count: PHYSICAL offset table entry count (may include null terminator)
 --                     If not provided, uses #framesets (for backward compatibility)
-function M.write_frames_section_to_memory(base_addr, frames_ptr, framesets, group_count, offset_table_count)
+-- group_entries: Original group entry values from parsing (preserves multi-group offsets)
+function M.write_frames_section_to_memory(base_addr, frames_ptr, framesets, group_count, offset_table_count, group_entries)
     if not framesets or #framesets == 0 then return end
 
     local addr = base_addr + frames_ptr
@@ -2385,11 +2392,18 @@ function M.write_frames_section_to_memory(base_addr, frames_ptr, framesets, grou
     -- Each group entry is RELATIVE to sprite_def_table_ptr (which is frames_ptr + 4)
     -- For group 0: offset table is at byte 6, relative to byte 4 = offset 2
     -- For group N: entry at (4 + N*2), points to that group's offset table relative to byte 4
+    -- CRITICAL: Use original group_entries values to preserve multi-group layout (fixes E065/Shiva)
     for g = 0, group_count - 1 do
         -- Group entry position: byte (4 + g*2)
         -- Value: offset to this group's offset table, relative to byte 4
-        -- For single group, offset table starts at group_entries_end, relative to byte 4 = group_entries_end - 4
-        local group_entry_value = group_entries_end - 4  -- Relative to sprite_def_table_ptr
+        -- Use original value if available, otherwise fallback to computed value
+        local group_entry_value
+        if group_entries and group_entries[g + 1] then
+            group_entry_value = group_entries[g + 1]
+        else
+            -- Fallback for backward compatibility: single group starts at group_entries_end - 4
+            group_entry_value = group_entries_end - 4
+        end
         mem.write16(addr + 4 + g * 2, group_entry_value)
     end
 
@@ -2468,7 +2482,8 @@ end
 -- Serialize frames section to byte string (for .bin saving)
 -- offset_table_count: PHYSICAL offset table entry count (may include null terminator)
 --                     If not provided, uses #framesets (for backward compatibility)
-function M.serialize_frames_section(framesets, group_count, offset_table_count)
+-- group_entries: Original group entry values from parsing (preserves multi-group offsets)
+function M.serialize_frames_section(framesets, group_count, offset_table_count, group_entries)
     if not framesets or #framesets == 0 then
         return string.char(0, 0, 0, 0), 4
     end
@@ -2487,9 +2502,15 @@ function M.serialize_frames_section(framesets, group_count, offset_table_count)
     local frameset_data_start = math.ceil(frameset_data_start_raw / 4) * 4
 
     -- Group entries (relative to sprite_def_table_ptr which is at byte 4)
-    -- For single group: offset table starts at group_entries_end, relative to byte 4 = group_entries_end - 4
+    -- CRITICAL: Use original group_entries values to preserve multi-group layout (fixes E065/Shiva)
     for g = 1, group_count do
-        local group_entry_value = group_entries_end - 4  -- Relative to sprite_def_table_ptr
+        local group_entry_value
+        if group_entries and group_entries[g] then
+            group_entry_value = group_entries[g]
+        else
+            -- Fallback for backward compatibility: single group starts at group_entries_end - 4
+            group_entry_value = group_entries_end - 4
+        end
         bytes[#bytes + 1] = string.char(group_entry_value % 256, math.floor(group_entry_value / 256))
     end
 
