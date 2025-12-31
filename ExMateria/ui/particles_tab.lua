@@ -175,6 +175,12 @@ function M.draw()
 
     -- Handle deletion after iteration (to avoid modifying table while iterating)
     if emitter_to_delete then
+        local deleted_idx = EFFECT_EDITOR.emitters[emitter_to_delete].index
+
+        -- Update ALL emitter references BEFORE removing the emitter
+        -- This updates child_emitter_on_death, child_emitter_mid_life, and timeline emitter_ids
+        M.update_emitter_references_on_delete(deleted_idx)
+
         table.remove(EFFECT_EDITOR.emitters, emitter_to_delete)
         -- Re-index remaining emitters
         for idx, em in ipairs(EFFECT_EDITOR.emitters) do
@@ -663,6 +669,63 @@ function M.draw_child_emitters(e, i)
         if c then e.child_emitter_mid_life = v end
 
         imgui.TreePop()
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Emitter Reference Updates (for deletion/reordering)
+--------------------------------------------------------------------------------
+
+-- Update all emitter references when an emitter is deleted
+-- deleted_idx: 0-indexed emitter being deleted
+function M.update_emitter_references_on_delete(deleted_idx)
+    -- Update child emitter references in ALL emitters
+    for _, e in ipairs(EFFECT_EDITOR.emitters) do
+        -- Skip the emitter being deleted
+        if e.index ~= deleted_idx then
+            -- child_emitter_on_death (0-indexed)
+            if e.child_emitter_on_death == deleted_idx then
+                e.child_emitter_on_death = 0
+                -- Disable death mode: clear bits 0-1 of emitter_flags_lo
+                e.emitter_flags_lo = math.floor(e.emitter_flags_lo / 4) * 4
+            elseif e.child_emitter_on_death > deleted_idx then
+                e.child_emitter_on_death = e.child_emitter_on_death - 1
+            end
+
+            -- child_emitter_mid_life (0-indexed)
+            if e.child_emitter_mid_life == deleted_idx then
+                e.child_emitter_mid_life = 0
+                -- Disable mid-life mode: clear bits 2-3 of emitter_flags_lo
+                local base = e.emitter_flags_lo % 4  -- keep bits 0-1
+                local upper = math.floor(e.emitter_flags_lo / 16) * 16  -- keep bits 4+
+                e.emitter_flags_lo = base + upper
+            elseif e.child_emitter_mid_life > deleted_idx then
+                e.child_emitter_mid_life = e.child_emitter_mid_life - 1
+            end
+        end
+    end
+
+    -- Update timeline keyframe emitter_ids
+    M.update_timeline_emitter_refs(deleted_idx)
+end
+
+-- Update timeline keyframe emitter references when an emitter is deleted
+-- deleted_idx: 0-indexed emitter being deleted
+function M.update_timeline_emitter_refs(deleted_idx)
+    if not EFFECT_EDITOR.timeline_channels then return end
+
+    -- Timeline emitter_id is 1-indexed: 0=None, 1=emitter0, 2=emitter1...
+    local deleted_emitter_id = deleted_idx + 1
+
+    -- timeline_channels is a flat array of 15 channels (not nested by context)
+    for _, channel in ipairs(EFFECT_EDITOR.timeline_channels) do
+        for _, kf in ipairs(channel.keyframes) do
+            if kf.emitter_id == deleted_emitter_id then
+                kf.emitter_id = 0  -- None
+            elseif kf.emitter_id > deleted_emitter_id then
+                kf.emitter_id = kf.emitter_id - 1
+            end
+        end
     end
 end
 
