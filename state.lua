@@ -1,0 +1,225 @@
+-- state.lua
+-- Global state for the FFT Effect Editor
+-- These MUST be global for breakpoint persistence (local variables get GC'd)
+
+--------------------------------------------------------------------------------
+-- Global State (must be global for GC reasons)
+--------------------------------------------------------------------------------
+
+EFFECT_EDITOR = {
+    window_open = true,
+    current_tab = 1,
+
+    -- File state
+    file_path = "",
+    file_data = nil,
+    file_name = "",
+
+    -- Parsed data
+    header = nil,
+    sections = nil,
+    emitter_count = 0,
+
+    -- Particle system data
+    particle_header = nil,
+    emitters = nil,
+
+    -- Animation curves data
+    curves = nil,               -- Table of curves (1-indexed), each is table of 160 values
+    curve_count = 0,            -- Number of curves (typically 15)
+    original_curves = nil,      -- Copy for reset functionality
+
+    -- Timeline data
+    timeline_header = nil,              -- {phase1_duration, spawn_delay, phase2_delay, ...}
+    timeline_channels = nil,            -- Array of 15 particle channels (5 animate_tick, 5 phase1, 5 phase2)
+    original_timeline_header = nil,     -- Copy for reset functionality
+    original_timeline_channels = nil,   -- Copy for reset functionality
+
+    -- Camera timeline data
+    camera_tables = nil,                -- Array of 3 camera tables (MAIN, FOR-EACH-TARGET, CLEANUP)
+    original_camera_tables = nil,       -- Copy for reset functionality
+
+    -- Color tracks data (12 tracks: 4 per context, 3 contexts)
+    color_tracks = nil,                 -- Array of 12 color tracks
+    original_color_tracks = nil,        -- Copy for reset functionality
+
+    -- Time scale / time scales data (2 regions: process_timeline and animate_tick)
+    time_scales = nil,                -- { process_timeline = {600 values}, animate_tick = {600 values} }
+    original_time_scales = nil,       -- Copy for reset functionality
+
+    -- Effect flags (for time scale enable bits)
+    effect_flags = nil,                 -- { flags_byte = 0 }
+    original_effect_flags = nil,        -- Copy for reset functionality
+
+    -- Sound flags (4 channels from effect_flags section 0x08-0x17)
+    sound_flags = nil,                  -- Array of 4 channels: {mode, id_a, id_b, id_c}
+    original_sound_flags = nil,         -- Copy for reset
+
+    -- Sound definition ("feds" section)
+    sound_definition = nil,             -- Parsed feds structure
+    original_sound_definition = nil,    -- Copy for reset
+
+    -- Sound timeline tracks (TIER 1: WHEN sounds play)
+    -- Structure: { animate_tick = {[1-3]}, phase1 = {[1-3]}, phase2 = {[1-3]} }
+    -- Each track: { context, track_index, is_foreach, max_keyframe, keyframes = {duration, sound_id} }
+    sound_timelines = nil,              -- 9 tracks total (3 per context)
+    original_sound_timelines = nil,     -- Copy for reset
+
+    -- Script bytecode
+    script_instructions = nil,          -- Array of parsed script instructions
+    original_script_instructions = nil, -- Copy for reset
+
+    -- Frames/Sprite definitions
+    framesets = nil,                    -- Array of frameset structures (each contains frames array)
+    frames_group_count = 0,             -- Number of frameset groups
+    frames_offset_table_count = 0,      -- Physical offset table entry count (includes null terminator if present)
+    original_framesets = nil,           -- Copy for reset functionality
+
+    -- Animation sequences
+    sequences = nil,                    -- Array of sequences (each contains instructions array)
+    sequence_count = 0,                 -- Number of sequences
+    original_sequences = nil,           -- Copy for reset functionality
+    animation_section_target_size = 0,  -- Target size for padding (set by calculate_animation_delta)
+
+    -- Memory target
+    memory_base = 0,
+
+    -- Capture system
+    capture_armed = false,
+    last_captured_effect_id = -1,
+
+    -- In-memory savestate (Slice) - used for Test Cycle
+    in_memory_savestate = nil,
+
+    -- Unified save/load state
+    effect_id = 0,              -- Decimal effect ID (1 = E001.BIN)
+    session_name = "",          -- Single name for .sstate, .bin, and .json
+
+    -- File lists (populated by ee_refresh)
+    session_files = {},         -- List of saved sessions (by name)
+
+    -- Status
+    status_msg = "Ready. Use ee_arm() to capture, then Save to create session.",
+    effect_number = "001",
+
+    -- Auto-loop settings
+    auto_loop_enabled = false,
+    auto_loop_seconds = 3.0,    -- Loop duration in seconds
+    auto_loop_timer = 0,        -- Countdown timer (in seconds)
+    auto_loop_last_time = 0,    -- Last frame time for delta calculation
+
+    -- Test cycle settings
+    test_quiet = true,          -- Suppress console logging during test cycle
+    test_verbose = false,       -- Show detailed [DEBUG] messages
+
+    -- Texture editing state
+    texture_export_fingerprint = nil,  -- Hash of exported BMP (to detect changes)
+    texture_width = 0,                 -- Current texture width (pixels)
+    texture_height = 0,                -- Current texture height (pixels)
+    texture_original_palette = nil     -- Original BGR555 palette (512 bytes) for STP bit preservation
+}
+
+-- Breakpoint handles (must be global to avoid GC)
+EFFECT_CAPTURE_BP = nil
+PARTICLE_SPAWN_LOG_BP = nil
+
+-- Lifecycle capture breakpoints (4 total)
+LIFECYCLE_BP_INIT = nil           -- Effect start (0x801A1920)
+LIFECYCLE_BP_SPAWN_ENTRY = nil    -- emitter_control ENTRY (0x801A60AC)
+LIFECYCLE_BP_SPAWN_EXIT = nil     -- emitter_control EXIT (0x801A7F54)
+LIFECYCLE_BP_FRAME = nil          -- update_all_particles (0x801A2EB4)
+
+-- Emitter invocation capture breakpoints
+EMITTER_INVOCATION_BP = nil       -- emitter_control ENTRY (0x801A60AC)
+EMITTER_INVOCATION_BP_EXIT = nil  -- emitter_control EXIT (0x801A7F54)
+
+-- Sound capture breakpoints
+SOUND_CAPTURE_BP = nil            -- play_sound (0x800125a8)
+SOUND_CAPTURE_FRAME_BP = nil      -- effect_system_main_loop (0x801A18D8)
+SOUND_CAPTURE_LOOKUP_BP = nil     -- lookup_sound_effect (0x801A32E8)
+
+-- Note capture breakpoints
+NOTE_CAPTURE_BP = nil             -- note handler (0x80015428)
+NOTE_CAPTURE_FRAME_BP = nil       -- effect_system_main_loop (0x801A18D8)
+
+-- Opcode capture breakpoints (effect-scoped SMD opcodes)
+OPCODE_CAPTURE_INSTRUMENT_BP = nil  -- Instrument handler (0x80015dd0)
+OPCODE_CAPTURE_OCTAVE_BP = nil      -- Octave handler (0x800159f0)
+OPCODE_CAPTURE_DYNAMICS_BP = nil    -- Dynamics handler (0x80016614)
+OPCODE_CAPTURE_NOTE_BP = nil        -- Note handler (0x80015428)
+OPCODE_CAPTURE_FRAME_BP = nil       -- Frame counter (0x801A2EB4)
+
+-- Last error (for UI display)
+EFFECT_EDITOR_LAST_ERROR = nil
+
+--------------------------------------------------------------------------------
+-- Module interface
+--------------------------------------------------------------------------------
+
+local M = {}
+
+-- Reset state to defaults
+function M.reset()
+    EFFECT_EDITOR.window_open = true
+    EFFECT_EDITOR.current_tab = 1
+    EFFECT_EDITOR.file_path = ""
+    EFFECT_EDITOR.file_data = nil
+    EFFECT_EDITOR.file_name = ""
+    EFFECT_EDITOR.header = nil
+    EFFECT_EDITOR.sections = nil
+    EFFECT_EDITOR.emitter_count = 0
+    EFFECT_EDITOR.particle_header = nil
+    EFFECT_EDITOR.emitters = nil
+    EFFECT_EDITOR.curves = nil
+    EFFECT_EDITOR.curve_count = 0
+    EFFECT_EDITOR.original_curves = nil
+    EFFECT_EDITOR.timeline_header = nil
+    EFFECT_EDITOR.timeline_channels = nil
+    EFFECT_EDITOR.original_timeline_header = nil
+    EFFECT_EDITOR.original_timeline_channels = nil
+    EFFECT_EDITOR.camera_tables = nil
+    EFFECT_EDITOR.original_camera_tables = nil
+    EFFECT_EDITOR.color_tracks = nil
+    EFFECT_EDITOR.original_color_tracks = nil
+    EFFECT_EDITOR.time_scales = nil
+    EFFECT_EDITOR.original_time_scales = nil
+    EFFECT_EDITOR.effect_flags = nil
+    EFFECT_EDITOR.original_effect_flags = nil
+    EFFECT_EDITOR.sound_flags = nil
+    EFFECT_EDITOR.original_sound_flags = nil
+    EFFECT_EDITOR.sound_definition = nil
+    EFFECT_EDITOR.original_sound_definition = nil
+    EFFECT_EDITOR.sound_timelines = nil
+    EFFECT_EDITOR.original_sound_timelines = nil
+    EFFECT_EDITOR.script_instructions = nil
+    EFFECT_EDITOR.original_script_instructions = nil
+    EFFECT_EDITOR.framesets = nil
+    EFFECT_EDITOR.frames_group_count = 0
+    EFFECT_EDITOR.frames_offset_table_count = 0
+    EFFECT_EDITOR.original_framesets = nil
+    EFFECT_EDITOR.sequences = nil
+    EFFECT_EDITOR.sequence_count = 0
+    EFFECT_EDITOR.original_sequences = nil
+    EFFECT_EDITOR.animation_section_target_size = 0
+    EFFECT_EDITOR.memory_base = 0
+    EFFECT_EDITOR.capture_armed = false
+    EFFECT_EDITOR.last_captured_effect_id = -1
+    EFFECT_EDITOR.in_memory_savestate = nil
+    EFFECT_EDITOR.effect_id = 0
+    EFFECT_EDITOR.session_name = ""
+    EFFECT_EDITOR.session_files = {}
+    EFFECT_EDITOR.status_msg = "Ready. Use ee_arm() to capture, then Save to create session."
+    EFFECT_EDITOR.effect_number = "001"
+    EFFECT_EDITOR.auto_loop_enabled = false
+    EFFECT_EDITOR.auto_loop_seconds = 3.0
+    EFFECT_EDITOR.auto_loop_timer = 0
+    EFFECT_EDITOR.auto_loop_last_time = 0
+    EFFECT_EDITOR.test_quiet = true
+    EFFECT_EDITOR.test_verbose = false
+    EFFECT_EDITOR.texture_export_fingerprint = nil
+    EFFECT_EDITOR.texture_width = 0
+    EFFECT_EDITOR.texture_height = 0
+    EFFECT_EDITOR.texture_original_palette = nil
+end
+
+return M

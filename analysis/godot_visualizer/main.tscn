@@ -1,0 +1,45 @@
+[gd_scene load_steps=2 format=3 uid="uid://c7j8x4p2yb8r5"]
+
+[ext_resource type="Script" path="res://CaptureVisualizer.gd" id="1_visualizer"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_visualizer")
+
+[node name="UI" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="FrameLabel" type="Label" parent="UI"]
+offset_left = 10.0
+offset_top = 550.0
+offset_right = 200.0
+offset_bottom = 580.0
+text = "Frame: 0 / 0"
+
+[node name="InfoLabel" type="Label" parent="UI"]
+offset_left = 600.0
+offset_top = 10.0
+offset_right = 790.0
+offset_bottom = 100.0
+text = "Effect: unknown
+Frames: 0
+UV Groups: 0"
+
+[node name="FrameSlider" type="HSlider" parent="UI"]
+offset_left = 200.0
+offset_top = 555.0
+offset_right = 590.0
+offset_bottom = 575.0
+min_value = 0.0
+max_value = 100.0
+value = 0.0
+
+[node name="HelpLabel" type="Label" parent="UI"]
+offset_left = 10.0
+offset_top = 500.0
+offset_right = 600.0
+offset_bottom = 540.0
+text = "Controls: SPACE=play/pause, LEFT/RIGHT=step, L=load, W=wireframe, V=vertices, C=UV colors, +/-=zoom"
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
+
+[connection signal="value_changed" from="UI/FrameSlider" to="." method="_on_frame_slider_value_changed"]
